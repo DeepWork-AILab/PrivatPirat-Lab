@@ -1,0 +1,28 @@
+# Secrets and private operational state
+.env
+.env.*
+!.env.example
+secrets/
+private/
+inventory/private/
+evidence/raw/
+configs/generated/
+client-configs/
+server-configs/
+
+# Keys, certificates and generated connection profiles
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.mobileconfig
+
+# Logs, backups and editor/OS noise
+*.log
+*.bak
+*.old
+*~
+.DS_Store
+.idea/
+.vscode/
