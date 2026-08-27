@@ -16,7 +16,7 @@ param(
 
     [uri[]]$HttpEndpoints = @(
         'http://example.com/'
-        'http://neverssl.com/'
+        'http://httpforever.com/'
     ),
 
     [uri[]]$HttpsEndpoints = @(
