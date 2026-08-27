@@ -89,6 +89,9 @@ function Get-SanitizedError {
     $Safe = $Safe -replace '(?i)https?://\S+', '[URI REDACTED]'
     $Safe = $Safe -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b', '[IP REDACTED]'
     $Safe = $Safe -replace '(?i)(?<![0-9a-f:])(?:[0-9a-f]{1,4}:){2,7}[0-9a-f:]{0,4}(?![0-9a-f:])', '[IP REDACTED]'
+    $Safe = $Safe -replace '(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b', '[HOST REDACTED]'
+    $Safe = $Safe -replace '(?i)\b[A-Z]:\\[^\r\n]*', '[PATH REDACTED]'
+    $Safe = $Safe -replace '\\\\[^\\\s]+\\[^\r\n]*', '[PATH REDACTED]'
     $Safe = $Safe -replace '\b[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\b', '[UUID REDACTED]'
     $Safe = $Safe -replace '\b[A-Za-z0-9_+/=-]{32,}\b', '[TOKEN REDACTED]'
     $Safe = ($Safe -replace '[\r\n]+', ' ').Trim()
@@ -431,13 +434,18 @@ try {
     $UtcNow = [DateTimeOffset]::UtcNow
     $NetworkSlug = if ($NetworkClass -eq 'Wi-Fi') { 'wifi' } else { 'mobile' }
     $EvidenceId = 'PP-LAB-I-{0}-{1}-R{2}-{3}' -f `
-        $UtcNow.ToString('yyyyMMddTHHmmssZ'),
+        $UtcNow.ToString('yyyyMMddTHHmmssfffZ'),
         $NetworkSlug,
         $Repetition,
         $Phase.ToLowerInvariant()
 
     $RunDirectory = Join-Path $EvidenceRoot $EvidenceId
-    New-Item -ItemType Directory -Path $RunDirectory -Force | Out-Null
+
+    if (Test-Path -LiteralPath $RunDirectory) {
+        throw 'Каталог evidence уже существует. Перезапись запрещена.'
+    }
+
+    New-Item -ItemType Directory -Path $RunDirectory | Out-Null
 
     Write-Host "Собираю санитизированное evidence: $EvidenceId" -ForegroundColor Green
 
@@ -508,6 +516,13 @@ try {
         'PARTIAL'
     }
 
+    $G2Verdict = if ($ObservationVerdict -eq 'FAIL') {
+        'FAIL'
+    }
+    else {
+        'PARTIAL'
+    }
+
     $RemainingGates = [Collections.Generic.List[string]]::new()
     [void]$RemainingGates.Add('aggregate three clean reconnect repetitions per available target network')
     [void]$RemainingGates.Add('verify server-unit restart recovery as a separate approved gate')
@@ -568,7 +583,7 @@ try {
             observations = @($ExitInternalResults | ForEach-Object { $_.Public })
         }
         observation_verdict = $ObservationVerdict
-        g2_verdict = 'PARTIAL'
+        g2_verdict = $G2Verdict
         remaining_gates = @($RemainingGates)
     }
 
@@ -599,7 +614,7 @@ try {
         "Exit-IP services agree: $ExitServicesAgree"
         "Exit-IP match: $ExitMatchesExpected"
         "Observation verdict: $ObservationVerdict"
-        'G2 verdict: PARTIAL'
+        "G2 verdict: $G2Verdict"
         'Raw exit IP stored: false'
         "Evidence JSON SHA-256: $JsonHash"
         'Remaining gates:'
@@ -610,14 +625,13 @@ try {
 
     Write-Host "`n===== НАБЛЮДЕНИЕ ЗАВЕРШЕНО =====" -ForegroundColor Green
     Write-Host "OBSERVATION_VERDICT=$ObservationVerdict"
-    Write-Host 'G2_VERDICT=PARTIAL'
-    Write-Host "JSON=$JsonPath" -ForegroundColor Cyan
-    Write-Host "SUMMARY=$TextPath" -ForegroundColor Cyan
-    Write-Host "SHA256=$HashPath" -ForegroundColor Cyan
+    Write-Host "G2_VERDICT=$G2Verdict"
+    Write-Host "EVIDENCE_ID=$EvidenceId" -ForegroundColor Cyan
+    Write-Host 'FILES=evidence.json, summary.txt, evidence.sha256' -ForegroundColor Cyan
     Write-Host 'Сырые IP, URI, ответы endpoint и credentials не записывались.' `
         -ForegroundColor Yellow
 
-    $ExitCode = switch ($ObservationVerdict) {
+    $ExitCode = switch ($G2Verdict) {
         'PASS' { 0 }
         'PARTIAL' { 10 }
         'FAIL' { 20 }
