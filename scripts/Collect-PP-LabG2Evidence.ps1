@@ -36,6 +36,8 @@ param(
 
     [System.Security.SecureString]$ExpectedExitIp,
 
+    [switch]$PromptForExpectedExitIp,
+
     [ValidateSet('PASS', 'FAIL', 'NOT_TESTED')]
     [string]$DnsLeakVerdict = 'NOT_TESTED',
 
@@ -429,6 +431,16 @@ try {
 
     if (Test-GitAncestor -Path $EvidenceRoot) {
         throw 'EvidenceRoot находится внутри Git worktree. Выберите приватный каталог вне репозитория.'
+    }
+
+    if ($PromptForExpectedExitIp -and $null -ne $ExpectedExitIp) {
+        throw 'Используйте либо ExpectedExitIp, либо PromptForExpectedExitIp, но не оба параметра.'
+    }
+
+    if ($PromptForExpectedExitIp) {
+        Write-Host 'Введите ожидаемый exit IP. Значение скрыто и не записывается.' `
+            -ForegroundColor Cyan
+        $ExpectedExitIp = Read-Host 'Expected exit IP' -AsSecureString
     }
 
     $ExpectedAddress = $null
