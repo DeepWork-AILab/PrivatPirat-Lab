@@ -241,7 +241,7 @@ function Invoke-ExitIpProbe {
     param(
         [Parameter(Mandatory)][uri]$Uri,
         [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][Net.IPAddress]$ExpectedAddress
+        [AllowNull()][Net.IPAddress]$ExpectedAddress
     )
 
     $Timer = [Diagnostics.Stopwatch]::StartNew()
@@ -274,10 +274,25 @@ function Invoke-ExitIpProbe {
             $null -ne $ObservedAddress
         )
 
-        $MatchesExpected = (
-            $RequestPassed -and
-            $ObservedAddress.Equals($ExpectedAddress)
-        )
+        $MatchesExpected = if ($null -eq $ExpectedAddress) {
+            $null
+        }
+        else {
+            $RequestPassed -and $ObservedAddress.Equals($ExpectedAddress)
+        }
+
+        $ProbeVerdict = if (-not $RequestPassed) {
+            'FAIL'
+        }
+        elseif ($null -eq $ExpectedAddress) {
+            'PARTIAL'
+        }
+        elseif ($MatchesExpected) {
+            'PASS'
+        }
+        else {
+            'FAIL'
+        }
 
         return [pscustomobject]@{
             Public = [pscustomobject]@{
@@ -286,7 +301,7 @@ function Invoke-ExitIpProbe {
                 ip_detected       = ($null -ne $ObservedAddress)
                 matches_expected  = $MatchesExpected
                 duration_ms       = [int]$Timer.ElapsedMilliseconds
-                verdict           = if ($RequestPassed -and $MatchesExpected) { 'PASS' } else { 'FAIL' }
+                verdict           = $ProbeVerdict
                 error             = $null
             }
             ObservedAddress = $ObservedAddress
@@ -300,7 +315,7 @@ function Invoke-ExitIpProbe {
                 endpoint          = $Label
                 status            = $null
                 ip_detected       = $false
-                matches_expected  = $false
+                matches_expected  = $null
                 duration_ms       = [int]$Timer.ElapsedMilliseconds
                 verdict           = 'FAIL'
                 error             = Get-SanitizedError $_.Exception.Message
@@ -416,20 +431,17 @@ try {
         throw 'EvidenceRoot находится внутри Git worktree. Выберите приватный каталог вне репозитория.'
     }
 
-    if ($null -eq $ExpectedExitIp) {
-        Write-Host 'Введите ожидаемый exit IP. Значение не отображается и не записывается.' `
-            -ForegroundColor Cyan
-        $ExpectedExitIp = Read-Host 'Expected exit IP' -AsSecureString
-    }
-
-    $ExpectedText = (ConvertFrom-SecureValue -Value $ExpectedExitIp).Trim()
     $ExpectedAddress = $null
 
-    if (-not [Net.IPAddress]::TryParse($ExpectedText, [ref]$ExpectedAddress)) {
-        throw 'Ожидаемый exit IP имеет неверный формат.'
-    }
+    if ($null -ne $ExpectedExitIp) {
+        $ExpectedText = (ConvertFrom-SecureValue -Value $ExpectedExitIp).Trim()
 
-    Remove-Variable ExpectedText -ErrorAction SilentlyContinue
+        if (-not [Net.IPAddress]::TryParse($ExpectedText, [ref]$ExpectedAddress)) {
+            throw 'Ожидаемый exit IP имеет неверный формат.'
+        }
+
+        Remove-Variable ExpectedText -ErrorAction SilentlyContinue
+    }
 
     $UtcNow = [DateTimeOffset]::UtcNow
     $NetworkSlug = if ($NetworkClass -eq 'Wi-Fi') { 'wifi' } else { 'mobile' }
@@ -493,23 +505,32 @@ try {
         @($ObservedAddresses | Select-Object -Unique).Count -eq 1
     )
 
-    $ExitMatchesExpected = (
+    $ExitMatchTested = ($null -ne $ExpectedAddress)
+
+    $ExitMatchesExpected = if ($ExitMatchTested) {
         @($ExitInternalResults | Where-Object { -not $_.Public.matches_expected }).Count -eq 0
-    )
+    }
+    else {
+        $null
+    }
 
     $DirectFailure = (
         -not $HttpPass -or
         -not $HttpsPass -or
         -not $DnsResolutionPass -or
         -not $ExitServicesAgree -or
-        -not $ExitMatchesExpected -or
+        ($ExitMatchTested -and -not $ExitMatchesExpected) -or
         $DnsLeakVerdict -eq 'FAIL'
     )
 
     $ObservationVerdict = if ($DirectFailure) {
         'FAIL'
     }
-    elseif ($CleanReconnectConfirmed -and $DnsLeakVerdict -eq 'PASS') {
+    elseif (
+        $CleanReconnectConfirmed -and
+        $DnsLeakVerdict -eq 'PASS' -and
+        $ExitMatchTested
+    ) {
         'PASS'
     }
     else {
@@ -535,6 +556,10 @@ try {
 
     if ($DnsLeakVerdict -ne 'PASS') {
         [void]$RemainingGates.Add('attach an independent DNS leak assessment')
+    }
+
+    if (-not $ExitMatchTested) {
+        [void]$RemainingGates.Add('compare both exit-IP observations with the approved server exit IP')
     }
 
     $CollectorHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -578,6 +603,7 @@ try {
         }
         exit_ip = [ordered]@{
             services_agree = $ExitServicesAgree
+            match_tested = $ExitMatchTested
             matches_expected = $ExitMatchesExpected
             raw_addresses_stored = $false
             observations = @($ExitInternalResults | ForEach-Object { $_.Public })
@@ -600,6 +626,13 @@ try {
     "$JsonHash *evidence.json" |
         Set-Content -LiteralPath $HashPath -Encoding ascii
 
+    $ExitMatchSummary = if ($ExitMatchTested) {
+        $ExitMatchesExpected.ToString()
+    }
+    else {
+        'NOT_TESTED'
+    }
+
     $Summary = @(
         "Evidence ID: $EvidenceId"
         "UTC timestamp: $($UtcNow.ToString('o'))"
@@ -613,7 +646,7 @@ try {
         "HTTP: $($Evidence.http.verdict)"
         "HTTPS: $($Evidence.https.verdict)"
         "Exit-IP services agree: $ExitServicesAgree"
-        "Exit-IP match: $ExitMatchesExpected"
+        "Exit-IP match: $ExitMatchSummary"
         "Observation verdict: $ObservationVerdict"
         "G2 verdict: $G2Verdict"
         'Raw exit IP stored: false'
