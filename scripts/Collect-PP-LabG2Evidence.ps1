@@ -590,6 +590,7 @@ try {
     $JsonPath = Join-Path $RunDirectory 'evidence.json'
     $TextPath = Join-Path $RunDirectory 'summary.txt'
     $HashPath = Join-Path $RunDirectory 'evidence.sha256'
+    $HandoffPath = Join-Path $RunDirectory 'handoff.txt'
 
     $Evidence | ConvertTo-Json -Depth 10 |
         Set-Content -LiteralPath $JsonPath -Encoding utf8
@@ -623,11 +624,20 @@ try {
 
     $Summary | Set-Content -LiteralPath $TextPath -Encoding utf8
 
+    @(
+        '===== SUMMARY ====='
+        (Get-Content -LiteralPath $TextPath -Raw)
+        '===== EVIDENCE JSON ====='
+        (Get-Content -LiteralPath $JsonPath -Raw)
+        '===== EVIDENCE SHA-256 ====='
+        (Get-Content -LiteralPath $HashPath -Raw)
+    ) | Set-Content -LiteralPath $HandoffPath -Encoding utf8
+
     Write-Host "`n===== НАБЛЮДЕНИЕ ЗАВЕРШЕНО =====" -ForegroundColor Green
     Write-Host "OBSERVATION_VERDICT=$ObservationVerdict"
     Write-Host "G2_VERDICT=$G2Verdict"
     Write-Host "EVIDENCE_ID=$EvidenceId" -ForegroundColor Cyan
-    Write-Host 'FILES=evidence.json, summary.txt, evidence.sha256' -ForegroundColor Cyan
+    Write-Host 'HANDOFF=handoff.txt' -ForegroundColor Cyan
     Write-Host 'Сырые IP, URI, ответы endpoint и credentials не записывались.' `
         -ForegroundColor Yellow
 
