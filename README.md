@@ -2,11 +2,11 @@
 
 Экспериментальный проект по последовательному развёртыванию и доказательному тестированию трёх независимо выбираемых маршрутов на одном VPS и одном публичном IP.
 
-**Статус:** `EXPERIMENTAL / Stage 3 — MOBILE PASS / FORMAL PARTIAL`
+**Статус:** `EXPERIMENTAL / Stage 3 — PASS`
 
 **Узел:** `PP-LAB-01`
 
-**Текущий факт:** `PP-LAB-I` принят по `G2`. `PP-LAB-II` построен как отдельный Xray instance/unit и прошёл Android/mobile acceptance: DNS/HTTP/HTTPS, два независимых exit-IP check, 3/3 clean reconnect, server-unit restart recovery и stop/start recovery/isolation. После добавления II обязательная mobile regression `PP-LAB-I` также прошла 3/3. Формальный `G3` пока остаётся `PARTIAL`: Wi-Fi acceptance `PP-LAB-II` и отдельная leak-oriented DNS-проверка II ещё не выполнены. `G4 / PP-LAB-III` остаётся заблокированным до формального `G3 PASS`.
+**Текущий факт:** `PP-LAB-I` принят по `G2`. `PP-LAB-II` принят по `G3`: Android/mobile и Wi-Fi acceptance завершены с полным data path, 3/3 clean reconnect на каждой сети, restart recovery, stop/start recovery/isolation и browser-based leak-oriented DNS check по принятой методике. После добавления II обязательная regression `PP-LAB-I` также прошла 3/3 на mobile и Wi-Fi. `G4 / PP-LAB-III` открыт только для preflight; серверные изменения Stage 4 не начинаются до подтверждения домена/DNS и способа получения доверенного TLS-сертификата.
 
 **Источник истины проекта:** ветка `main` этого репозитория.
 
@@ -63,8 +63,8 @@
 1. `Stage 0 — PASS` — границы, источники и отдельный публичный репозиторий зафиксированы.
 2. `Stage 1 — PASS` — identity, SSH host key и read-only inventory подтверждены.
 3. `Stage 2 — PASS` — `PP-LAB-I` прошёл Wi‑Fi и Android mobile data-path acceptance, clean reconnect, independent exit-IP checks, restart recovery и stop/start recovery/isolation.
-4. `Stage 3 — MOBILE PASS / FORMAL PARTIAL` — `PP-LAB-II` полностью прошёл mobile acceptance и mobile regression `PP-LAB-I`; Wi-Fi acceptance II и leak-oriented DNS check ещё открыты.
-5. `Stage 4 — BLOCKED` — `PP-LAB-III` не начинается до формального закрытия `G3`.
+4. `Stage 3 — PASS` — `PP-LAB-II` прошёл Android/mobile и Wi-Fi acceptance, leak-oriented DNS check, restart и stop/start isolation; `PP-LAB-I` прошёл обязательную regression на обеих сетях.
+5. `Stage 4 — OPEN FOR PREFLIGHT` — `PP-LAB-III` разрешено проектировать; серверные изменения блокированы до подтверждения домена/DNS и TLS-сертификата и отдельного R3 change packet.
 
 Следующий этап открывается только после PASS предыдущего gate. Полный порядок и критерии описаны в [протоколе эксперимента](docs/EXPERIMENT_PROTOCOL.md).
 
@@ -86,17 +86,18 @@
 
 - `FACT` — PP-LAB-II создан как отдельный Xray instance/unit на отдельном входе с новыми client/server credentials; PP-LAB-I при построении II не переписывался.
 - `FACT` — server-side config test, service state и listener для II прошли проверку; контрольная проверка подтвердила, что конфигурация I не изменилась.
-- `FACT` — Android/mobile smoke test II: DNS/HTTP/HTTPS и совпадение exit IP — PASS.
 - `FACT` — Android/mobile clean reconnect II: `3/3 PASS`; каждый раунд включал DNS/HTTP/HTTPS и два независимых exit-IP check.
 - `FACT` — restart recovery II: PASS. Один промежуточный ложный отрицательный результат был вызван тем, что административный SSH проходил через тот же перезапускаемый маршрут; последующий различающий read-only check подтвердил восстановление обоих units, SSH и data path II.
-- `FACT` — stop/start recovery/isolation II: PASS; во время остановки II `PP-LAB-I` остался active, затем II автоматически восстановился, полный mobile data path вернулся.
-- `FACT` — обязательная mobile regression `PP-LAB-I` после добавления II: `3/3 PASS` с DNS/HTTP/HTTPS и двумя независимыми exit-IP check в каждом раунде.
-- `DECISION` — mobile-часть `G3 / PP-LAB-II` принята как `PASS`.
-- `DECISION` — формальный `G3` остаётся `PARTIAL`: Wi-Fi acceptance II и отдельная leak-oriented DNS-проверка II остаются открыты.
-- `TODO` — при доступной Wi-Fi сети закрыть недостающий Wi-Fi acceptance II, leak-oriented DNS check и контрольную regression I; затем оформить `G3 PASS`.
-- `SECURITY TODO` — при локальной попытке открыть client URI через Android intent рабочая URI однажды появилась в Termux traceback; значение не публикуется. Ротация client credentials может быть выполнена отдельным maintenance change packet после функциональной приёмки.
+- `FACT` — stop/start recovery/isolation II: PASS; во время остановки II `PP-LAB-I` остался active, затем II автоматически восстановился, полный data path вернулся.
+- `FACT` — mobile regression `PP-LAB-I` после добавления II: `3/3 PASS`.
+- `FACT` — Wi-Fi clean reconnect II: `3/3 PASS`; DNS/HTTP/HTTPS и два независимых exit-IP check прошли во всех раундах.
+- `FACT` — browser-based leak-oriented DNS test на Wi-Fi при активном II не выявил резолверов обычного доступа; по принятой методике `DNS leak PASS`.
+- `FACT` — Wi-Fi regression `PP-LAB-I` после добавления II: `3/3 PASS`.
+- `DECISION` — `G3 — PP-LAB-II: PASS`.
+- `DECISION` — `G4 / PP-LAB-III` открыт только для preflight.
+- `SECURITY TODO` — при локальной попытке открыть client URI через Android intent рабочая URI однажды появилась в Termux traceback; значение не публикуется. Ротация client credentials может быть выполнена отдельным maintenance change packet.
 
-Текущий G3-checkpoint: [`docs/evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md`](docs/evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md).
+Финальная G3-запись: [`docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md`](docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md).
 
 ## Связь с AI Symbiosis Field Notes
 
