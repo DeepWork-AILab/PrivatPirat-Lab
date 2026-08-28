@@ -5,13 +5,14 @@
 - `FACT` — публичная архитектурная рамка подготовлена.
 - `FACT` — identity и read-only inventory `PP-LAB-01` подтверждены.
 - `FACT` — `PP-LAB-I` прошёл полный `G2 PASS`: Wi-Fi и Android mobile data path, clean reconnect, independent exit-IP checks, restart recovery и stop/start recovery/isolation.
-- `FACT` — `PP-LAB-II` построен как отдельный Xray instance/unit; Android/mobile acceptance II завершён PASS, включая 3/3 clean reconnect, restart recovery и stop/start recovery/isolation.
-- `FACT` — после добавления II обязательная Android/mobile regression `PP-LAB-I` завершена 3/3 PASS.
+- `FACT` — `PP-LAB-II` построен как отдельный Xray instance/unit и прошёл полный `G3 PASS` на Android/mobile и Wi-Fi.
+- `FACT` — для II подтверждены 3/3 clean reconnect на обеих целевых сетях, restart recovery, stop/start recovery/isolation и leak-oriented browser DNS check по принятой методике.
+- `FACT` — после добавления II обязательная regression `PP-LAB-I` завершена 3/3 PASS на Android/mobile и Wi-Fi.
 - `DECISION` — маршруты принимаются последовательно и независимо.
-- `DECISION` — mobile-часть `G3 / PP-LAB-II` принята как PASS.
-- `DECISION` — формальный `G3` остаётся `PARTIAL`, пока не завершены Wi-Fi acceptance II и отдельная leak-oriented DNS-проверка II.
+- `DECISION` — `G3 / PP-LAB-II` принят как PASS.
+- `DECISION` — `G4 / PP-LAB-III` открыт только для preflight; серверные изменения не начинаются до подтверждения домена/DNS и способа получения доверенного TLS-сертификата и отдельного R3 change packet.
 - `HYPOTHESIS` — все три маршрута могут быть воспроизводимо работоспособны в доступных Wi‑Fi- и мобильных сетях Российской Федерации.
-- `TODO` — на доступной Wi-Fi сети завершить недостающий acceptance II и regression I; затем закрыть `G3`.
+- `TODO` — провести Stage 4 preflight для `PP-LAB-III`.
 
 ## 2. Gates
 
@@ -97,28 +98,26 @@ Inventory должен подтвердить:
 6. Повторить полный regression test I.
 7. При деградации I — STOP; II не принимается.
 
-**Current status:** `MOBILE PASS / FORMAL PARTIAL`.
+**Current verdict:** `PASS`.
 
-Подтверждено на Android/mobile:
+Подтверждено:
 
 - server-side config test, отдельный service/listener и неизменность I — PASS;
-- первичный data path II — PASS;
-- clean reconnect II — `3/3 PASS`;
+- Android/mobile clean reconnect II — `3/3 PASS`;
+- Wi-Fi clean reconnect II — `3/3 PASS`;
+- DNS resolution / HTTP / HTTPS / два независимых exit-IP check — PASS во всех acceptance rounds;
 - restart recovery II — PASS;
 - stop/start recovery/isolation II — PASS; при остановленном II маршрут I оставался active;
-- обязательная mobile regression I после добавления II — `3/3 PASS`.
+- leak-oriented browser DNS test на Wi-Fi — PASS по принятой проектной методике: резолверы обычного доступа не обнаружены;
+- обязательная regression I после добавления II — `3/3 PASS` на Android/mobile и `3/3 PASS` на Wi-Fi.
 
 Один промежуточный отрицательный restart-result был признан дефектом test harness: административный SSH проходил через тот же перезапускаемый II и потерял control channel. Единственный различающий read-only check подтвердил восстановление II, сохранность I, SSH и data path; серверный отказ не подтвердился.
 
-Открыто до формального `G3 PASS`:
-
-- Wi-Fi acceptance `PP-LAB-II`;
-- отдельная leak-oriented DNS-проверка II;
-- контрольная regression `PP-LAB-I` на Wi-Fi после проверки II.
-
-Текущая санитизированная запись: [`docs/evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md).
+Финальная санитизированная запись: [`docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-PASS-2026-08-29.md).
 
 ## 8. Stage 4 — PP-LAB-III
+
+**Current status:** `OPEN FOR PREFLIGHT`.
 
 1. До изменения подтвердить выбранный домен, DNS и способ получения доверенного TLS-сертификата.
 2. Выбрать отдельный свободный UDP-порт.
@@ -129,6 +128,8 @@ Inventory должен подтвердить:
 7. Выполнить полный data-path, restart и stop/start isolation tests III.
 8. Проверить III в Wi‑Fi и mobile network, если обе реально доступны.
 9. Повторить полные regression tests I и II.
+
+До завершения пункта 1 и отдельного R3 change packet серверные изменения Stage 4 не выполняются.
 
 ## 9. Минимальный data-path PASS
 
@@ -188,6 +189,6 @@ IP, домены конфигурации, ports, UUID, ключи, Short ID, п
 
 `G2 — PP-LAB-I: PASS` зафиксирован в [`docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md`](evidence/PP-LAB-I-G2-PASS-2026-08-29.md).
 
-`G3 — PP-LAB-II: MOBILE PASS / FORMAL PARTIAL` зафиксирован в [`docs/evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md).
+`G3 — PP-LAB-II: PASS` зафиксирован в [`docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-PASS-2026-08-29.md).
 
-`G4 / PP-LAB-III` остаётся заблокированным до формального `G3 PASS`. Ближайший шаг — завершить Wi-Fi acceptance II, leak-oriented DNS check и Wi-Fi regression I.
+`G4 / PP-LAB-III` открыт для preflight. Ближайший шаг — подтвердить домен/DNS и способ получения доверенного TLS-сертификата; затем подготовить отдельный change packet Stage 4.
