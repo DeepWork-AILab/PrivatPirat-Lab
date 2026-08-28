@@ -6,7 +6,7 @@
 
 **Узел:** `PP-LAB-01`
 
-**Текущий факт:** read-only inventory завершён, `PP-LAB-I` развёрнут. На Wi‑Fi подтверждены три чистых reconnect-повтора с `DNS/HTTP/HTTPS PASS` и совпадением exit IP; независимый browser-based DNS leak test не обнаружил утечки к обычному провайдеру. На текущей мобильной сети обнаружена регрессия: `PP-LAB-I` не проходит data path ни на Android напрямую, ни на Windows через hotspot, тогда как другой независимый VPN-маршрут через ту же мобильную сеть работает. Формальный `G2 PASS` не достигнут.
+**Текущий факт:** read-only inventory завершён, `PP-LAB-I` развёрнут. На Wi‑Fi подтверждены три чистых reconnect-повтора с `DNS/HTTP/HTTPS PASS` и совпадением exit IP; независимый browser-based DNS leak test не обнаружил утечки к обычному провайдеру. Мобильная регрессия `PP-LAB-I` устранена на Android минимальным клиентским изменением `fingerprint: chrome -> firefox`; после этого подтверждён реальный мобильный data path. Формальный `G2 PASS` всё ещё не достигнут, потому что отдельно остаются restart recovery и stop/start isolation.
 
 **Источник истины проекта:** ветка `main` этого репозитория.
 
@@ -62,7 +62,7 @@
 
 1. `Stage 0 — PASS` — границы, источники и отдельный публичный репозиторий зафиксированы.
 2. `Stage 1 — PASS` — identity, SSH host key и read-only inventory подтверждены.
-3. `Stage 2 — PARTIAL` — `PP-LAB-I` имеет воспроизводимый Wi‑Fi data path (`3/3` clean reconnect PASS) и independent DNS leak check PASS, но на текущей мобильной сети обнаружена регрессия; restart recovery и stop/start isolation ещё не закрыты.
+3. `Stage 2 — PARTIAL` — `PP-LAB-I` имеет воспроизводимый Wi‑Fi data path (`3/3` clean reconnect PASS), independent DNS leak check PASS и подтверждённый Android mobile data path после устранения клиентской регрессии; restart recovery и stop/start isolation ещё не закрыты.
 4. `Stage 3 — BLOCKED` — `PP-LAB-II` не начинается до формального закрытия `G2`.
 5. `Stage 4 — BLOCKED` — `PP-LAB-III` не начинается до формального закрытия `G3`.
 
@@ -72,10 +72,12 @@
 
 - `FACT` — Wi‑Fi: три чистых reconnect-повтора `PP-LAB-I` завершились с `DNS/HTTP/HTTPS PASS`; два независимых exit-IP endpoint согласились между собой и совпали с ожидаемым серверным выходом.
 - `FACT` — независимый browser-based DNS leak test показал только сторонние публичные резолверы и не выявил DNS обычного провайдера; для текущего acceptance это зафиксировано как `DNS leak PASS`.
-- `FACT` — mobile: `PP-LAB-I` сейчас не проходит data path на Android и на Windows через hotspot; другой VPN-маршрут через тот же мобильный доступ работает.
-- `DECISION` — `G2` остаётся `PARTIAL`; мобильная регрессия вынесена в отдельное расследование Issue #4 вместо серии предположительных изменений.
+- `FACT` — mobile regression: клиентский профиль Android перестал проходить data path на мобильной сети, хотя другой независимый VPN-маршрут через тот же мобильный доступ работал.
+- `FACT` — минимальное изменение `fingerprint: chrome -> firefox` восстановило реальный мобильный data path `PP-LAB-I` на Android; подтверждён реальный прикладной трафик, а не только состояние `connected`.
+- `FACT` — при исправлении мобильной регрессии серверная конфигурация, firewall и Xray не менялись.
+- `DECISION` — Issue #4 считается технически разрешённым по причине клиентской fingerprint-совместимости; G2 при этом остаётся `PARTIAL` до отдельных проверок restart recovery и route stop/start isolation.
 - `SECURITY TODO` — обнаружен старый рабочий credential/URI в локальной PowerShell history; секрет не публиковался. Remediation и ротация вынесены в Issue #5.
-- `TODO` — после расследования mobile отдельно закрыть server-unit restart recovery и route stop/start isolation.
+- `TODO` — отдельно закрыть server-unit restart recovery и route stop/start isolation.
 
 ## Связь с AI Symbiosis Field Notes
 
