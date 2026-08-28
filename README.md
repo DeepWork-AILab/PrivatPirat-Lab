@@ -2,11 +2,11 @@
 
 Экспериментальный проект по последовательному развёртыванию и доказательному тестированию трёх независимо выбираемых маршрутов на одном VPS и одном публичном IP.
 
-**Статус:** `EXPERIMENTAL / Stage 2 — PARTIAL`
+**Статус:** `EXPERIMENTAL / Stage 2 — PASS`
 
 **Узел:** `PP-LAB-01`
 
-**Текущий факт:** read-only inventory завершён, `PP-LAB-I` развёрнут. На Wi‑Fi подтверждены три чистых reconnect-повтора с `DNS/HTTP/HTTPS PASS` и совпадением exit IP; независимый browser-based DNS leak test не обнаружил утечки к обычному провайдеру. Мобильная регрессия `PP-LAB-I` устранена на Android минимальным клиентским изменением `fingerprint: chrome -> firefox`; после этого подтверждён реальный мобильный data path. Формальный `G2 PASS` всё ещё не достигнут, потому что отдельно остаются restart recovery и stop/start isolation.
+**Текущий факт:** `PP-LAB-I` принят по `G2`. На Wi‑Fi подтверждены три чистых reconnect-повтора с `DNS/HTTP/HTTPS PASS` и совпадением exit IP; независимый browser-based DNS leak test не обнаружил утечки к обычному провайдеру. Мобильная регрессия `PP-LAB-I` устранена на Android минимальным клиентским изменением `fingerprint: chrome -> firefox`; после этого подтверждены мобильный data path, повторные reconnect, server-unit restart recovery и stop/start recovery/isolation. `G2 PASS` достигнут; `Stage 3 / G3 — PP-LAB-II` разблокирован.
 
 **Источник истины проекта:** ветка `main` этого репозитория.
 
@@ -62,22 +62,26 @@
 
 1. `Stage 0 — PASS` — границы, источники и отдельный публичный репозиторий зафиксированы.
 2. `Stage 1 — PASS` — identity, SSH host key и read-only inventory подтверждены.
-3. `Stage 2 — PARTIAL` — `PP-LAB-I` имеет воспроизводимый Wi‑Fi data path (`3/3` clean reconnect PASS), independent DNS leak check PASS и подтверждённый Android mobile data path после устранения клиентской регрессии; restart recovery и stop/start isolation ещё не закрыты.
-4. `Stage 3 — BLOCKED` — `PP-LAB-II` не начинается до формального закрытия `G2`.
+3. `Stage 2 — PASS` — `PP-LAB-I` прошёл Wi‑Fi и Android mobile data-path acceptance, clean reconnect, independent exit-IP checks, restart recovery и stop/start recovery/isolation.
+4. `Stage 3 — OPEN` — `PP-LAB-II` может начинаться; при его приёмке обязателен regression test `PP-LAB-I`.
 5. `Stage 4 — BLOCKED` — `PP-LAB-III` не начинается до формального закрытия `G3`.
 
 Следующий этап открывается только после PASS предыдущего gate. Полный порядок и критерии описаны в [протоколе эксперимента](docs/EXPERIMENT_PROTOCOL.md).
 
-## Текущий checkpoint — 2026-08-28
+## Текущий checkpoint — 2026-08-29
 
 - `FACT` — Wi‑Fi: три чистых reconnect-повтора `PP-LAB-I` завершились с `DNS/HTTP/HTTPS PASS`; два независимых exit-IP endpoint согласились между собой и совпали с ожидаемым серверным выходом.
 - `FACT` — независимый browser-based DNS leak test показал только сторонние публичные резолверы и не выявил DNS обычного провайдера; для текущего acceptance это зафиксировано как `DNS leak PASS`.
-- `FACT` — mobile regression: клиентский профиль Android перестал проходить data path на мобильной сети, хотя другой независимый VPN-маршрут через тот же мобильный доступ работал.
-- `FACT` — минимальное изменение `fingerprint: chrome -> firefox` восстановило реальный мобильный data path `PP-LAB-I` на Android; подтверждён реальный прикладной трафик, а не только состояние `connected`.
-- `FACT` — при исправлении мобильной регрессии серверная конфигурация, firewall и Xray не менялись.
-- `DECISION` — Issue #4 считается технически разрешённым по причине клиентской fingerprint-совместимости; G2 при этом остаётся `PARTIAL` до отдельных проверок restart recovery и route stop/start isolation.
+- `FACT` — mobile regression устранена минимальным изменением `fingerprint: chrome -> firefox`; серверная конфигурация, firewall и Xray для исправления не менялись.
+- `FACT` — Android mobile data path после исправления прошёл DNS/HTTP/HTTPS и independent exit-IP checks; повторные clean reconnect подтверждены.
+- `FACT` — отдельный passphrase-protected ED25519 SSH identity для POCO/Termux авторизован на PP-LAB-01; key-only login подтверждён.
+- `FACT` — read-only inspection подтвердил, что активный `xray.service` обслуживает inbound структуры VLESS / RAW / REALITY / Vision, соответствующий PP-LAB-I.
+- `FACT` — `restart recovery PASS`: после restart Xray сервис вернулся в `active`, процесс был перезапущен, и полный data path восстановился.
+- `FACT` — `stop/start recovery/isolation PASS`: при остановке route стал недоступен, затем серверный unit был восстановлен, после чего DNS/HTTP/HTTPS и два exit-IP check снова прошли.
+- `DECISION` — `G2 — PP-LAB-I: PASS`. `Stage 3 / G3 — PP-LAB-II` разблокирован.
 - `SECURITY TODO` — обнаружен старый рабочий credential/URI в локальной PowerShell history; секрет не публиковался. Remediation и ротация вынесены в Issue #5.
-- `TODO` — отдельно закрыть server-unit restart recovery и route stop/start isolation.
+
+Финальная санитизированная запись: [`docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md`](docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md).
 
 ## Связь с AI Symbiosis Field Notes
 
