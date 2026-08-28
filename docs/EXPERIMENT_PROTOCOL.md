@@ -6,11 +6,11 @@
 - `FACT` — identity и read-only inventory `PP-LAB-01` подтверждены.
 - `FACT` — Xray установлен и `PP-LAB-I` развёрнут на отдельном сетевом входе.
 - `FACT` — серверная конфигурация прошла встроенную проверку; сервис и listener активны.
-- `FACT` — рабочий HTTPS data path с совпадением выходного адреса подтверждён на Windows и Android, включая домашний Wi‑Fi и мобильную сеть 4G.
-- `FACT` — текущего evidence недостаточно для полного `G2 PASS` по разделу 9.
+- `FACT` — `PP-LAB-I` прошёл полный `G2 PASS`: Wi-Fi и Android mobile data path, clean reconnect, independent exit-IP checks, restart recovery и stop/start recovery/isolation.
 - `DECISION` — маршруты принимаются последовательно и независимо.
+- `DECISION` — `G3 / PP-LAB-II` открыт; PP-LAB-I не меняется при построении II и должен пройти regression test перед приёмкой II.
 - `HYPOTHESIS` — все три маршрута могут быть воспроизводимо работоспособны в доступных Wi‑Fi- и мобильных сетях Российской Федерации.
-- `TODO` — завершить DNS/HTTP/HTTPS matrix, два независимых exit-IP endpoint, три чистых reconnect, restart recovery и stop/start isolation для `PP-LAB-I`.
+- `TODO` — построить и принять `PP-LAB-II` по критериям `G3`.
 
 ## 2. Gates
 
@@ -18,7 +18,7 @@
 |---|---|---|
 | `G0 — Intake` | утверждены имя, границы и публичная рамка | `PASS` — отдельный репозиторий и границы зафиксированы |
 | `G1 — Inventory` | получен SSH-доступ и проверен host-key fingerprint | `PASS` — read-only inventory выполнен, расхождение ресурсов принято отдельным решением владельца |
-| `G2 — PP-LAB-I` | `G1 PASS` и согласован change packet | `PARTIAL` — рабочий data path подтверждён; полный acceptance matrix ещё не закрыт |
+| `G2 — PP-LAB-I` | `G1 PASS` и согласован change packet | `PASS` — полный acceptance I, включая restart recovery и stop/start recovery/isolation |
 | `G3 — PP-LAB-II` | `G2 PASS` | полный PASS II и regression PASS I |
 | `G4 — PP-LAB-III` | `G3 PASS`, подтверждены домен и сертификат | полный PASS III и regression PASS I+II |
 
@@ -84,6 +84,8 @@ Inventory должен подтвердить:
 9. Остановить I и подтвердить, что именно I недоступен; снова запустить и проверить восстановление.
 10. Оформить PASS/FAIL с санитизированным evidence.
 
+**Current verdict:** `PASS` — финальная запись: [`docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md`](evidence/PP-LAB-I-G2-PASS-2026-08-29.md).
+
 ## 7. Stage 3 — PP-LAB-II
 
 1. Не менять файлы, unit, порт и секреты I.
@@ -93,6 +95,8 @@ Inventory должен подтвердить:
 5. Выполнить полный data-path, restart и stop/start isolation tests II.
 6. Повторить полный regression test I.
 7. При деградации I — STOP; II не принимается.
+
+**Current status:** `OPEN` — разрешено начинать после отдельного согласованного change packet.
 
 ## 8. Stage 4 — PP-LAB-III
 
@@ -162,10 +166,6 @@ IP, домены конфигурации, ports, UUID, ключи, Short ID, п
 
 ## 12. Текущий checkpoint
 
-Санитизированный результат первого рабочего маршрута зафиксирован в
-[`docs/evidence/PP-LAB-I-2026-08-17.md`](evidence/PP-LAB-I-2026-08-17.md).
+`G2 — PP-LAB-I: PASS` зафиксирован в [`docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md`](evidence/PP-LAB-I-G2-PASS-2026-08-29.md).
 
-Этот checkpoint разрешает документирование и дальнейшие различающие read-only
-тесты, но не открывает `G3`. Перед созданием `PP-LAB-II` необходимо либо закрыть
-оставшиеся критерии `G2`, либо принять отдельное явное решение об изменении
-экспериментального протокола.
+Этот checkpoint открывает `G3 / Stage 3 — PP-LAB-II`. Перед любым изменением для II требуется новый change packet. При построении II запрещено менять PP-LAB-I; перед приёмкой II обязателен полный regression test I.
