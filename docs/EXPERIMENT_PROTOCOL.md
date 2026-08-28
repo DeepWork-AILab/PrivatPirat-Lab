@@ -4,13 +4,14 @@
 
 - `FACT` — публичная архитектурная рамка подготовлена.
 - `FACT` — identity и read-only inventory `PP-LAB-01` подтверждены.
-- `FACT` — Xray установлен и `PP-LAB-I` развёрнут на отдельном сетевом входе.
-- `FACT` — серверная конфигурация прошла встроенную проверку; сервис и listener активны.
 - `FACT` — `PP-LAB-I` прошёл полный `G2 PASS`: Wi-Fi и Android mobile data path, clean reconnect, independent exit-IP checks, restart recovery и stop/start recovery/isolation.
+- `FACT` — `PP-LAB-II` построен как отдельный Xray instance/unit; Android/mobile acceptance II завершён PASS, включая 3/3 clean reconnect, restart recovery и stop/start recovery/isolation.
+- `FACT` — после добавления II обязательная Android/mobile regression `PP-LAB-I` завершена 3/3 PASS.
 - `DECISION` — маршруты принимаются последовательно и независимо.
-- `DECISION` — `G3 / PP-LAB-II` открыт; PP-LAB-I не меняется при построении II и должен пройти regression test перед приёмкой II.
+- `DECISION` — mobile-часть `G3 / PP-LAB-II` принята как PASS.
+- `DECISION` — формальный `G3` остаётся `PARTIAL`, пока не завершены Wi-Fi acceptance II и отдельная leak-oriented DNS-проверка II.
 - `HYPOTHESIS` — все три маршрута могут быть воспроизводимо работоспособны в доступных Wi‑Fi- и мобильных сетях Российской Федерации.
-- `TODO` — построить и принять `PP-LAB-II` по критериям `G3`.
+- `TODO` — на доступной Wi-Fi сети завершить недостающий acceptance II и regression I; затем закрыть `G3`.
 
 ## 2. Gates
 
@@ -19,7 +20,7 @@
 | `G0 — Intake` | утверждены имя, границы и публичная рамка | `PASS` — отдельный репозиторий и границы зафиксированы |
 | `G1 — Inventory` | получен SSH-доступ и проверен host-key fingerprint | `PASS` — read-only inventory выполнен, расхождение ресурсов принято отдельным решением владельца |
 | `G2 — PP-LAB-I` | `G1 PASS` и согласован change packet | `PASS` — полный acceptance I, включая restart recovery и stop/start recovery/isolation |
-| `G3 — PP-LAB-II` | `G2 PASS` | полный PASS II и regression PASS I |
+| `G3 — PP-LAB-II` | `G2 PASS` | полный PASS II на целевых доступных сетях + regression PASS I |
 | `G4 — PP-LAB-III` | `G3 PASS`, подтверждены домен и сертификат | полный PASS III и regression PASS I+II |
 
 FAIL или неожиданный результат закрывает gate. Исправления не выполняются серией предположений: разрешён один различающий read-only тест, затем новое решение человека.
@@ -96,7 +97,26 @@ Inventory должен подтвердить:
 6. Повторить полный regression test I.
 7. При деградации I — STOP; II не принимается.
 
-**Current status:** `OPEN` — разрешено начинать после отдельного согласованного change packet.
+**Current status:** `MOBILE PASS / FORMAL PARTIAL`.
+
+Подтверждено на Android/mobile:
+
+- server-side config test, отдельный service/listener и неизменность I — PASS;
+- первичный data path II — PASS;
+- clean reconnect II — `3/3 PASS`;
+- restart recovery II — PASS;
+- stop/start recovery/isolation II — PASS; при остановленном II маршрут I оставался active;
+- обязательная mobile regression I после добавления II — `3/3 PASS`.
+
+Один промежуточный отрицательный restart-result был признан дефектом test harness: административный SSH проходил через тот же перезапускаемый II и потерял control channel. Единственный различающий read-only check подтвердил восстановление II, сохранность I, SSH и data path; серверный отказ не подтвердился.
+
+Открыто до формального `G3 PASS`:
+
+- Wi-Fi acceptance `PP-LAB-II`;
+- отдельная leak-oriented DNS-проверка II;
+- контрольная regression `PP-LAB-I` на Wi-Fi после проверки II.
+
+Текущая санитизированная запись: [`docs/evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md).
 
 ## 8. Stage 4 — PP-LAB-III
 
@@ -168,4 +188,6 @@ IP, домены конфигурации, ports, UUID, ключи, Short ID, п
 
 `G2 — PP-LAB-I: PASS` зафиксирован в [`docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md`](evidence/PP-LAB-I-G2-PASS-2026-08-29.md).
 
-Этот checkpoint открывает `G3 / Stage 3 — PP-LAB-II`. Перед любым изменением для II требуется новый change packet. При построении II запрещено менять PP-LAB-I; перед приёмкой II обязателен полный regression test I.
+`G3 — PP-LAB-II: MOBILE PASS / FORMAL PARTIAL` зафиксирован в [`docs/evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-MOBILE-PASS-2026-08-29.md).
+
+`G4 / PP-LAB-III` остаётся заблокированным до формального `G3 PASS`. Ближайший шаг — завершить Wi-Fi acceptance II, leak-oriented DNS check и Wi-Fi regression I.
