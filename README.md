@@ -2,11 +2,11 @@
 
 Экспериментальный проект по последовательному развёртыванию и доказательному тестированию трёх независимо выбираемых маршрутов на одном VPS и одном публичном IP.
 
-**Статус:** `EXPERIMENTAL / Stage 3 — PASS`
+**Статус:** `EXPERIMENTAL / Stage 4 — PASS`
 
 **Узел:** `PP-LAB-01`
 
-**Текущий факт:** `PP-LAB-I` принят по `G2`. `PP-LAB-II` принят по `G3`: Android/mobile и Wi-Fi acceptance завершены с полным data path, 3/3 clean reconnect на каждой сети, restart recovery, stop/start recovery/isolation и browser-based leak-oriented DNS check по принятой методике. После добавления II обязательная regression `PP-LAB-I` также прошла 3/3 на mobile и Wi-Fi. `G4 / PP-LAB-III` открыт только для preflight; серверные изменения Stage 4 не начинаются до подтверждения домена/DNS и способа получения доверенного TLS-сертификата.
+**Текущий факт:** `PP-LAB-I`, `PP-LAB-II` и `PP-LAB-III` формально приняты по действующему protocol baseline. I = VLESS RAW/TCP REALITY/Vision; II = VLESS XHTTP REALITY; III = Hysteria2 TLS/QUIC/UDP. Для всех маршрутов подтверждён полный data path; II и III прошли по 3/3 clean reconnect на Android/mobile и Wi-Fi, restart recovery и stop/start recovery/isolation. После добавления III обязательная regression I+II также прошла 3/3 на Wi-Fi и mobile. `G4 / PP-LAB-III = PASS`.
 
 **Источник истины проекта:** ветка `main` этого репозитория.
 
@@ -35,9 +35,9 @@
           └─ UDP/<PORT_III> → hysteria2       → PP-LAB-III
 ```
 
-Порты, домен, REALITY target/SNI и версии ПО не назначаются до read-only inventory и проверки актуальной upstream-документации. Каждый маршрут должен запускаться, останавливаться, тестироваться и использоваться независимо. Автоматическое переключение, балансировка, общий failover, Control Plane и subscription endpoint не входят в эксперимент.
+Каждый маршрут запускается, останавливается, тестируется и используется независимо. Автоматическое переключение, балансировка, общий failover, Control Plane и subscription endpoint не входят в эксперимент.
 
-Один VPS остаётся общей точкой отказа. Три маршрута на нём исследуют транспортное разнообразие, но не создают высокую доступность.
+Один VPS остаётся общей точкой отказа. Три маршрута на нём дают транспортное разнообразие, но не создают высокую доступность.
 
 ## Граница со Space Signal
 
@@ -49,7 +49,7 @@
 - не включает результаты в формальную Триаду, Гексаду или Эннеаду;
 - не меняет `DeepWork-AILab/Space-Signal` или его ветку `main`.
 
-Если все три маршрута получат доказательный PASS, результат станет лишь кандидатом на воспроизводимый шаблон одной узловой Триады. Формальное включение потребует отдельного архитектурного решения в Space Signal.
+Если все три маршрута получили доказательный PASS, результат становится кандидатом на воспроизводимый шаблон одной узловой Триады. Формальное включение потребует отдельного архитектурного решения в Space Signal.
 
 ## Платформа эксперимента
 
@@ -64,9 +64,9 @@
 2. `Stage 1 — PASS` — identity, SSH host key и read-only inventory подтверждены.
 3. `Stage 2 — PASS` — `PP-LAB-I` прошёл Wi‑Fi и Android mobile data-path acceptance, clean reconnect, independent exit-IP checks, restart recovery и stop/start recovery/isolation.
 4. `Stage 3 — PASS` — `PP-LAB-II` прошёл Android/mobile и Wi-Fi acceptance, leak-oriented DNS check, restart и stop/start isolation; `PP-LAB-I` прошёл обязательную regression на обеих сетях.
-5. `Stage 4 — OPEN FOR PREFLIGHT` — `PP-LAB-III` разрешено проектировать; серверные изменения блокированы до подтверждения домена/DNS и TLS-сертификата и отдельного R3 change packet.
+5. `Stage 4 — PASS` — `PP-LAB-III` построен как отдельный Hysteria2 service, прошёл mobile/Wi-Fi acceptance, leak-oriented DNS check, restart recovery, stop/start isolation; `PP-LAB-I` и `PP-LAB-II` прошли обязательную regression на обеих сетях.
 
-Следующий этап открывается только после PASS предыдущего gate. Полный порядок и критерии описаны в [протоколе эксперимента](docs/EXPERIMENT_PROTOCOL.md).
+Полный порядок и критерии описаны в [протоколе эксперимента](docs/EXPERIMENT_PROTOCOL.md).
 
 ## Текущий checkpoint — 2026-08-29
 
@@ -94,10 +94,24 @@
 - `FACT` — browser-based leak-oriented DNS test на Wi-Fi при активном II не выявил резолверов обычного доступа; по принятой методике `DNS leak PASS`.
 - `FACT` — Wi-Fi regression `PP-LAB-I` после добавления II: `3/3 PASS`.
 - `DECISION` — `G3 — PP-LAB-II: PASS`.
-- `DECISION` — `G4 / PP-LAB-III` открыт только для preflight.
 - `SECURITY TODO` — при локальной попытке открыть client URI через Android intent рабочая URI однажды появилась в Termux traceback; значение не публикуется. Ротация client credentials может быть выполнена отдельным maintenance change packet.
 
 Финальная G3-запись: [`docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md`](docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md).
+
+### G4 / PP-LAB-III
+
+- `FACT` — Hysteria2 `v2.12.1` установлен как отдельный service; upstream SHA-256 verification — PASS.
+- `DECISION` — для лабораторного III вместо домена/ACME принят self-signed TLS с обязательным certificate pinning (`pinSHA256`). Plain `insecure` без pin не является принятой схемой.
+- `FACT` — успешный server build подтвердил отдельный UDP listener, отдельный service identity/unit и неизменность конфигураций I/II.
+- `FACT` — Android/mobile clean reconnect III: `3/3 PASS`; DNS/HTTP/HTTPS и два independent exit-IP check — PASS во всех раундах.
+- `FACT` — Wi-Fi clean reconnect III: `3/3 PASS`; DNS/HTTP/HTTPS и два independent exit-IP check — PASS во всех раундах.
+- `FACT` — browser-based leak-oriented DNS test на Wi-Fi при активном III не выявил резолверов обычного доступа; наблюдались только публичные Cloudflare/Google resolvers в США. По принятой методике `DNS leak PASS`.
+- `FACT` — restart recovery III: PASS; процесс III сменился, I/II/III остались active, data path восстановился. Промежуточный local curl timeout классифицирован как дефект test harness, а не отказ маршрута.
+- `FACT` — stop/start recovery/isolation III: PASS; при остановленном III I и II оставались active, затем III автоматически восстановился и полный data path вернулся.
+- `FACT` — обязательная regression после добавления III: `PP-LAB-I` и `PP-LAB-II` каждый прошёл `3/3 PASS` на Wi-Fi и `3/3 PASS` на mobile.
+- `DECISION` — `G4 — PP-LAB-III: PASS`.
+
+Финальная G4-запись: [`docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md`](docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md).
 
 ## Связь с AI Symbiosis Field Notes
 
@@ -115,7 +129,7 @@ PrivatPirat Lab соответствует этой концепции **усл�
 
 ## Безопасность и публичность
 
-Репозиторий намеренно не содержит рабочих конфигураций и секретов. Запрещено коммитить IP сервера без отдельного решения, SSH-ключи, UUID, REALITY private key/Short ID, пароли, домены/SNI/target, ключи сертификатов, рабочие ссылки подключения, subscription URL, полные клиентские конфиги и сырые логи.
+Репозиторий намеренно не содержит рабочих конфигураций и секретов. Запрещено коммитить IP сервера без отдельного решения, SSH-ключи, UUID, REALITY private key/Short ID, пароли, домены/SNI/target, ключи сертификатов, working certificate pins, рабочие ссылки подключения, subscription URL, полные клиентские конфиги и сырые логи.
 
 Перед каждым изменением обязательны: цель, минимальное действие, воздействие, Expected, проверка, backup, rollback и stop condition. Подробности — в [AGENTS.md](AGENTS.md) и [SECURITY.md](SECURITY.md).
 
