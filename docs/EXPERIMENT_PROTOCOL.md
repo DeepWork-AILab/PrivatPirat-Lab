@@ -5,14 +5,14 @@
 - `FACT` — публичная архитектурная рамка подготовлена.
 - `FACT` — identity и read-only inventory `PP-LAB-01` подтверждены.
 - `FACT` — `PP-LAB-I` прошёл полный `G2 PASS`: Wi-Fi и Android mobile data path, clean reconnect, independent exit-IP checks, restart recovery и stop/start recovery/isolation.
-- `FACT` — `PP-LAB-II` построен как отдельный Xray instance/unit и прошёл полный `G3 PASS` на Android/mobile и Wi-Fi.
-- `FACT` — для II подтверждены 3/3 clean reconnect на обеих целевых сетях, restart recovery, stop/start recovery/isolation и leak-oriented browser DNS check по принятой методике.
-- `FACT` — после добавления II обязательная regression `PP-LAB-I` завершена 3/3 PASS на Android/mobile и Wi-Fi.
+- `FACT` — `PP-LAB-II` прошёл полный `G3 PASS` на Android/mobile и Wi-Fi; после его добавления regression I прошла на обеих сетях.
+- `FACT` — `PP-LAB-III` построен как отдельный Hysteria2 service и прошёл полный `G4 PASS` на Android/mobile и Wi-Fi.
+- `FACT` — для III подтверждены 3/3 clean reconnect на обеих сетях, restart recovery, stop/start recovery/isolation и leak-oriented browser DNS check по принятой методике.
+- `FACT` — после добавления III обязательная regression `PP-LAB-I` и `PP-LAB-II` завершена 3/3 PASS на Android/mobile и Wi-Fi для каждого маршрута.
 - `DECISION` — маршруты принимаются последовательно и независимо.
-- `DECISION` — `G3 / PP-LAB-II` принят как PASS.
-- `DECISION` — `G4 / PP-LAB-III` открыт только для preflight; серверные изменения не начинаются до подтверждения домена/DNS и способа получения доверенного TLS-сертификата и отдельного R3 change packet.
-- `HYPOTHESIS` — все три маршрута могут быть воспроизводимо работоспособны в доступных Wi‑Fi- и мобильных сетях Российской Федерации.
-- `TODO` — провести Stage 4 preflight для `PP-LAB-III`.
+- `DECISION` — `G4 / PP-LAB-III` принят как PASS.
+- `DECISION` — трёхмаршрутный baseline `PP-LAB-I + PP-LAB-II + PP-LAB-III` завершён.
+- `FACT` — один VPS остаётся общим failure domain; три маршрута дают транспортное разнообразие, но не host-level high availability.
 
 ## 2. Gates
 
@@ -21,8 +21,8 @@
 | `G0 — Intake` | утверждены имя, границы и публичная рамка | `PASS` — отдельный репозиторий и границы зафиксированы |
 | `G1 — Inventory` | получен SSH-доступ и проверен host-key fingerprint | `PASS` — read-only inventory выполнен, расхождение ресурсов принято отдельным решением владельца |
 | `G2 — PP-LAB-I` | `G1 PASS` и согласован change packet | `PASS` — полный acceptance I, включая restart recovery и stop/start recovery/isolation |
-| `G3 — PP-LAB-II` | `G2 PASS` | полный PASS II на целевых доступных сетях + regression PASS I |
-| `G4 — PP-LAB-III` | `G3 PASS`, подтверждены домен и сертификат | полный PASS III и regression PASS I+II |
+| `G3 — PP-LAB-II` | `G2 PASS` | `PASS` — полный acceptance II на целевых сетях + regression PASS I |
+| `G4 — PP-LAB-III` | `G3 PASS` и принят TLS design | `PASS` — полный acceptance III на целевых сетях + regression PASS I+II |
 
 FAIL или неожиданный результат закрывает gate. Исправления не выполняются серией предположений: разрешён один различающий read-only тест, затем новое решение человека.
 
@@ -108,7 +108,7 @@ Inventory должен подтвердить:
 - DNS resolution / HTTP / HTTPS / два независимых exit-IP check — PASS во всех acceptance rounds;
 - restart recovery II — PASS;
 - stop/start recovery/isolation II — PASS; при остановленном II маршрут I оставался active;
-- leak-oriented browser DNS test на Wi-Fi — PASS по принятой проектной методике: резолверы обычного доступа не обнаружены;
+- leak-oriented browser DNS test на Wi-Fi — PASS по принятой проектной методике;
 - обязательная regression I после добавления II — `3/3 PASS` на Android/mobile и `3/3 PASS` на Wi-Fi.
 
 Один промежуточный отрицательный restart-result был признан дефектом test harness: административный SSH проходил через тот же перезапускаемый II и потерял control channel. Единственный различающий read-only check подтвердил восстановление II, сохранность I, SSH и data path; серверный отказ не подтвердился.
@@ -117,19 +117,34 @@ Inventory должен подтвердить:
 
 ## 8. Stage 4 — PP-LAB-III
 
-**Current status:** `OPEN FOR PREFLIGHT`.
+**Current verdict:** `PASS`.
 
-1. До изменения подтвердить выбранный домен, DNS и способ получения доверенного TLS-сертификата.
-2. Выбрать отдельный свободный UDP-порт.
-3. Зафиксировать проверенную версию Hysteria2 и checksum upstream-артефакта.
-4. Создать нового системного пользователя, каталог и unit III.
-5. Сгенерировать новый пароль/credential и private key сертификата; не раскрывать их.
-6. Проверить конфигурацию до запуска.
-7. Выполнить полный data-path, restart и stop/start isolation tests III.
-8. Проверить III в Wi‑Fi и mobile network, если обе реально доступны.
-9. Повторить полные regression tests I и II.
+Принятая архитектура:
 
-До завершения пункта 1 и отдельного R3 change packet серверные изменения Stage 4 не выполняются.
+- отдельный Hysteria2 service;
+- отдельный system user, config и systemd unit;
+- отдельный UDP listener;
+- Hysteria2 `v2.12.1`, скачанный бинарник прошёл upstream SHA-256 verification;
+- для лабораторного III вместо домена/ACME принят self-signed TLS с обязательным certificate pinning (`pinSHA256`);
+- plain `insecure` без pin не является принятой схемой.
+
+Подтверждено:
+
+- successful config/bind test и service start — PASS;
+- неизменность конфигураций I и II после build III — PASS;
+- Android/mobile clean reconnect III — `3/3 PASS`;
+- Wi-Fi clean reconnect III — `3/3 PASS`;
+- DNS resolution / HTTP / HTTPS / два независимых exit-IP check — PASS во всех acceptance rounds;
+- leak-oriented browser DNS test на Wi-Fi — PASS по принятой методике: резолверы обычного доступа не обнаружены;
+- restart recovery III — PASS; процесс III сменился, I/II/III остались active, data path восстановился;
+- stop/start recovery/isolation III — PASS; при остановленном III I и II оставались active, затем III автоматически восстановился и полный data path вернулся;
+- обязательная regression после добавления III: `PP-LAB-I` и `PP-LAB-II` каждый прошёл `3/3 PASS` на Wi-Fi и `3/3 PASS` на Android/mobile.
+
+Первый build III был остановлен из-за несовпавшего пути к checksum asset для ранее планировавшейся версии. Автоматический rollback подтвердил чистое состояние, I/II остались active, UDP listener освободился. После distinguishing read-only diagnostic build plan был отдельно переутверждён для `v2.12.1` и завершён PASS.
+
+Во время restart test ожидаемый локальный `curl` timeout завершил shell из-за дефекта harness. Один read-only post-restart diagnostic подтвердил `III_DATA_PATH=PASS`, active I/II/III и смену PID III; отказ маршрута не подтвердился.
+
+Финальная санитизированная запись: [`docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md`](evidence/PP-LAB-III-G4-PASS-2026-08-29.md).
 
 ## 9. Минимальный data-path PASS
 
@@ -183,12 +198,14 @@ Regression:
 Verdict: PASS | PARTIAL | FAIL
 ```
 
-IP, домены конфигурации, ports, UUID, ключи, Short ID, пароли, URI и сырые логи в публичную запись не входят.
+IP, домены конфигурации, ports, UUID, ключи, certificate pins, Short ID, пароли, URI и сырые логи в публичную запись не входят.
 
-## 12. Текущий checkpoint
+## 12. Финальный checkpoint
 
-`G2 — PP-LAB-I: PASS` зафиксирован в [`docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md`](evidence/PP-LAB-I-G2-PASS-2026-08-29.md).
+`G2 — PP-LAB-I: PASS` — [`docs/evidence/PP-LAB-I-G2-PASS-2026-08-29.md`](evidence/PP-LAB-I-G2-PASS-2026-08-29.md).
 
-`G3 — PP-LAB-II: PASS` зафиксирован в [`docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-PASS-2026-08-29.md).
+`G3 — PP-LAB-II: PASS` — [`docs/evidence/PP-LAB-II-G3-PASS-2026-08-29.md`](evidence/PP-LAB-II-G3-PASS-2026-08-29.md).
 
-`G4 / PP-LAB-III` открыт для preflight. Ближайший шаг — подтвердить домен/DNS и способ получения доверенного TLS-сертификата; затем подготовить отдельный change packet Stage 4.
+`G4 — PP-LAB-III: PASS` — [`docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md`](evidence/PP-LAB-III-G4-PASS-2026-08-29.md).
+
+Текущий экспериментальный baseline завершён: три маршрута приняты. Следующие изменения относятся уже к отдельным maintenance, hardening или архитектурным этапам и требуют новых change packets.
