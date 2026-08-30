@@ -1915,7 +1915,7 @@ def render_check() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser=argparse.ArgumentParser(prog="pp-build"); mode=parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--local-check",action="store_true"); mode.add_argument("--render-check",action="store_true"); mode.add_argument("--preflight-only",action="store_true"); mode.add_argument("--apply",action="store_true",help="disabled until a separate reviewed R3-SERVER checkpoint")
+    mode.add_argument("--local-check",action="store_true"); mode.add_argument("--render-check",action="store_true"); mode.add_argument("--preflight-only",action="store_true"); mode.add_argument("--apply",action="store_true",help="execute reviewed deployment flow after explicit R3-SERVER authorization")
     parser.add_argument("--profile-name"); return parser
 
 
@@ -1928,7 +1928,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"LOCAL_CHECK={'PASS' if all(result.values()) else 'FAIL'}"); return 0 if all(result.values()) else 2
         if args.render_check: return render_check()
         if args.apply:
-            print("APPLY=DISABLED"); print("R3_SERVER=REQUIRED_AFTER_IMPLEMENTATION_REVIEW"); print("VERDICT=STOP"); return 3
+            return run_deployment_after_gate(args)
         return run_preflight(args)
     except BuilderStop as exc:
         print(sanitize_error(str(exc))); print("VERDICT=STOP"); return 2

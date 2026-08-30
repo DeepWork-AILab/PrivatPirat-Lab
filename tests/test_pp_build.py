@@ -118,9 +118,11 @@ class Tests(unittest.TestCase):
         opts={o for a in pp.build_parser()._actions for o in a.option_strings}
         for bad in ("--host","--expected-host-key","--ssh-port","--sni","--cover","--password"): self.assertNotIn(bad,opts)
 
-    def test_apply_still_hard_disabled(self):
-        with mock.patch.object(pp,"run_deployment_after_gate") as runner:
-            self.assertEqual(pp.main(["--apply"]),3); runner.assert_not_called()
+    def test_apply_dispatches_to_reviewed_deployment_engine(self):
+        with mock.patch.object(pp,"run_deployment_after_gate", return_value=0) as runner:
+            self.assertEqual(pp.main(["--apply"]),0)
+            runner.assert_called_once()
+            self.assertTrue(runner.call_args.args[0].apply)
 
     def test_independent_http_https_hosts(self):
         from urllib.parse import urlparse
