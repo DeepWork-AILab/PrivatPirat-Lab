@@ -1587,7 +1587,10 @@ class LocalClientVerifier:
         return [str(self.artifacts["client_hysteria"]), "client", "-c", str(cfg)]
 
     def _verify_round(self, route: Route, material: RouteMaterial, index: int) -> bool:
-        socks = self._free_local_port(); cfg = self.private_dir / f"verify-{route.value}-{index}.conf"; cmd = self._command(route, material, socks, cfg)
+        socks = self._free_local_port()
+        suffix = "json" if route in {Route.I, Route.II} else "yaml"
+        cfg = self.private_dir / f"verify-{route.value}-{index}.{suffix}"
+        cmd = self._command(route, material, socks, cfg)
         proc = subprocess.Popen(cmd, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             if not self._wait_socks(socks, proc): return False

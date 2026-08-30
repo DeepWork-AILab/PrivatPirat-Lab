@@ -271,6 +271,20 @@ class Tests(unittest.TestCase):
             for p in files: self.assertEqual(stat.S_IMODE(p.stat().st_mode),0o600)
             m=(Path(tmp)/"bundle"/"manifest.json").read_text(); self.assertNotIn(I.uuid,m); self.assertNotIn(III.auth,m); self.assertNotIn("192.0.2.10",m)
 
+    def test_verifier_uses_parser_specific_config_suffixes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true"), "client_hysteria": Path("/bin/true")},
+                Path(tmp),
+            )
+            process = mock.Mock()
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=False), mock.patch.object(pp.subprocess, "Popen", return_value=process) as popen:
+                self.assertFalse(verifier._verify_round(pp.Route.I, I, 1))
+                self.assertTrue(str(popen.call_args.args[0][-1]).endswith(".json"))
+                self.assertFalse(verifier._verify_round(pp.Route.III, III, 1))
+                self.assertTrue(str(popen.call_args.args[0][-1]).endswith(".yaml"))
+
     def test_server_actions_are_separate(self):
         restart=pp.server_action_script(pp.Route.II,23452,"restart"); stop=pp.server_action_script(pp.Route.II,23452,"stop")
         self.assertIn("systemctl restart",restart); self.assertNotIn("systemctl stop",restart); self.assertIn("OLD_PID",restart); self.assertIn("NEW_PID",restart)
