@@ -141,6 +141,64 @@ class Tests(unittest.TestCase):
         s=pp.RemoteSession("example.com","root",22,Path("/tmp/kh"))
         with self.assertRaises(pp.BuilderStop): pp.SSHStageExecutor(s,PORTS,RUNTIME,{},Path("/tmp/x"))
 
+    def test_privilege_resolution_root_and_passwordless_sudo(self):
+        base=pp.RemoteSession("example.com","vps",22,Path("/tmp/kh"),Path("/tmp/ctl"))
+        root_result=mock.Mock(returncode=0,stdout="0\n")
+        with mock.patch.object(pp.subprocess,"run",return_value=root_result) as run:
+            resolved=pp.resolve_privilege(base)
+        self.assertFalse(resolved.use_sudo)
+        self.assertNotIn("sudo", " ".join(run.call_args.args[0]))
+
+        responses=[
+            mock.Mock(returncode=0,stdout="1000\n"),
+            mock.Mock(returncode=0,stdout="0\n"),
+        ]
+        with mock.patch.object(pp.subprocess,"run",side_effect=responses) as run:
+            resolved=pp.resolve_privilege(base)
+        self.assertTrue(resolved.use_sudo)
+        self.assertIn("sudo -n bash -s", " ".join(run.call_args_list[1].args[0]))
+
+    def test_privilege_resolution_rejects_non_nopasswd_sudo(self):
+        base=pp.RemoteSession("example.com","vps",22,Path("/tmp/kh"),Path("/tmp/ctl"))
+        responses=[
+            mock.Mock(returncode=0,stdout="1000\n"),
+            mock.Mock(returncode=1,stdout=""),
+        ]
+        with mock.patch.object(pp.subprocess,"run",side_effect=responses):
+            with self.assertRaisesRegex(pp.BuilderStop,"SSH_PASSWORDLESS_SUDO_REQUIRED"):
+                pp.resolve_privilege(base)
+
+    def test_sudo_inventory_and_stage_use_privileged_bash(self):
+        s=pp.RemoteSession("example.com","vps",22,Path("/tmp/kh"),Path("/tmp/ctl"),True)
+        inventory_result=mock.Mock(returncode=0,stdout=GOOD)
+        with mock.patch.object(pp.subprocess,"run",return_value=inventory_result) as run:
+            inv=pp.remote_inventory(s)
+        self.assertEqual(inv.uid,0)
+        self.assertIn("sudo -n bash -s"," ".join(run.call_args.args[0]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ex=pp.SSHStageExecutor(s,PORTS,RUNTIME,{},Path(tmp)/"private")
+            stage_result=mock.Mock(returncode=0,stdout="MARK=PASS\n")
+            with mock.patch.object(pp.subprocess,"run",return_value=stage_result) as run:
+                ex._run("true\n","MARK=PASS")
+            self.assertIn("sudo -n bash -s"," ".join(run.call_args.args[0]))
+
+    def test_stream_upload_keeps_payload_out_of_argv(self):
+        s=pp.RemoteSession("example.com","vps",22,Path("/tmp/kh"),Path("/tmp/ctl"),True)
+        with tempfile.TemporaryDirectory() as tmp:
+            ex=pp.SSHStageExecutor(s,PORTS,RUNTIME,{},Path(tmp)/"private")
+            local=Path(tmp)/"secret.bin"; local.write_bytes(b"TOP_SECRET_PAYLOAD")
+            result=mock.Mock(returncode=0,stdout=b"",stderr=b"")
+            with mock.patch.object(pp.subprocess,"run",return_value=result) as run:
+                ex._scp_to(local,"/var/lib/privatpirat-builder/runtime.json")
+            argv=" ".join(run.call_args.args[0])
+            self.assertIn("sudo -n bash -c",argv)
+            self.assertNotIn("TOP_SECRET_PAYLOAD",argv)
+            self.assertNotIn("scp ",argv)
+        source=MODULE_PATH.read_text()
+        self.assertNotIn("sshpass",source)
+        self.assertNotIn("sudo -S",source)
+
     def test_route_renderers(self):
         i=json.loads(pp.render_xray_server_config(pp.Route.I,23451,I,"cover.example","C"*43)); ii=json.loads(pp.render_xray_server_config(pp.Route.II,23452,II,"cover.example","D"*43))
         self.assertEqual(i["inbounds"][0]["streamSettings"]["network"],"raw"); self.assertEqual(ii["inbounds"][0]["streamSettings"]["network"],"xhttp")

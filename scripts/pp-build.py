@@ -18,6 +18,7 @@ import os
 import platform
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import stat
@@ -35,7 +36,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping, Protocol, Sequence
 
-BUILDER_VERSION = "0.1.0-r3-code-3"
+BUILDER_VERSION = "0.1.0-r3-code-5"
 SUPPORTED_OS = ("ubuntu", "24.04", "x86_64")
 MIN_MEMORY_KIB = 512 * 1024
 MIN_ROOT_FREE_KIB = 1024 * 1024
@@ -200,6 +201,7 @@ class RemoteSession:
     port: int
     known_hosts: Path
     control_path: Path | None = None
+    use_sudo: bool = False
 
 
 @dataclass(frozen=True)
@@ -758,6 +760,41 @@ def _ssh_base(session: RemoteSession) -> list[str]:
     return ["ssh", "-T"] + _ssh_common(session, multiplex=session.control_path is not None) + [f"{validate_user(session.user)}@{validate_host(session.host)}"]
 
 
+def _privileged_bash_argv(session: RemoteSession) -> list[str]:
+    return ["sudo", "-n", "bash", "-s"] if session.use_sudo else ["bash", "-s"]
+
+
+def _privileged_bash_command(session: RemoteSession, script: str) -> str:
+    prefix = "sudo -n " if session.use_sudo else ""
+    return prefix + "bash -c " + shlex.quote(script)
+
+
+def resolve_privilege(session: RemoteSession) -> RemoteSession:
+    if session.control_path is None:
+        raise BuilderStop("SSH_CONTROLMASTER_REQUIRED=STOP")
+    try:
+        direct = subprocess.run(
+            _ssh_base(session) + ["id", "-u"],
+            text=True, capture_output=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BuilderStop("SSH_PRIVILEGE_PROBE_TIMEOUT=STOP") from exc
+    if direct.returncode:
+        raise BuilderStop("SSH_PRIVILEGE_PROBE_FAIL=STOP")
+    if direct.stdout.strip() == "0":
+        return replace(session, use_sudo=False)
+    try:
+        elevated = subprocess.run(
+            _ssh_base(session) + ["sudo", "-n", "bash", "-s"],
+            input="id -u\n", text=True, capture_output=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BuilderStop("SSH_SUDO_PROBE_TIMEOUT=STOP") from exc
+    if elevated.returncode or elevated.stdout.strip() != "0":
+        raise BuilderStop("SSH_PASSWORDLESS_SUDO_REQUIRED=STOP")
+    return replace(session, use_sudo=True)
+
+
 def _scp_base(session: RemoteSession) -> list[str]:
     common = _ssh_common(session, multiplex=session.control_path is not None)
     converted: list[str] = []
@@ -812,6 +849,11 @@ class SSHControlMaster:
         if check.returncode:
             self.close()
             raise BuilderStop("SSH_MASTER_CHECK_FAIL=STOP")
+        try:
+            self.session = resolve_privilege(self.session)
+        except Exception:
+            self.close()
+            raise
         self.opened = True
         return self.session
 
@@ -836,7 +878,7 @@ class SSHControlMaster:
 
 def remote_inventory(session: RemoteSession) -> Inventory:
     try:
-        proc = subprocess.run(_ssh_base(session) + ["sh", "-s"], input=INVENTORY_SCRIPT, text=True, capture_output=True, timeout=55)
+        proc = subprocess.run(_ssh_base(session) + _privileged_bash_argv(session), input=INVENTORY_SCRIPT, text=True, capture_output=True, timeout=55)
     except subprocess.TimeoutExpired as exc:
         raise BuilderStop("SSH_INVENTORY_TIMEOUT=STOP") from exc
     if proc.returncode:
@@ -1362,25 +1404,62 @@ class SSHStageExecutor:
 
     def _run(self, script: str, marker: str, timeout: int = 90) -> None:
         try:
-            proc = subprocess.run(_ssh_base(self.session) + ["bash", "-s"], input=script, text=True, capture_output=True, timeout=timeout)
+            proc = subprocess.run(_ssh_base(self.session) + _privileged_bash_argv(self.session), input=script, text=True, capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             raise BuilderStop("REMOTE_STAGE_TIMEOUT=STOP") from exc
         if proc.returncode or marker not in proc.stdout.splitlines():
             raise BuilderStop(f"REMOTE_STAGE_FAILED={marker}")
 
     def _scp_to(self, local: Path, remote: str) -> None:
-        cmd = _scp_base(self.session) + [str(local), f"{self.session.user}@{_scp_host(self.session.host)}:{remote}"]
-        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=90)
+        quoted = shlex.quote(remote)
+        remote_cmd = _privileged_bash_command(
+            self.session,
+            f"umask 077; cat > {quoted}; chmod 0600 {quoted}",
+        )
+        try:
+            with local.open("rb") as handle:
+                proc = subprocess.run(
+                    _ssh_base(self.session) + [remote_cmd],
+                    stdin=handle,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=90,
+                )
+        except subprocess.TimeoutExpired as exc:
+            raise BuilderStop("SSH_STREAM_UPLOAD_TIMEOUT=STOP") from exc
         if proc.returncode:
-            raise BuilderStop("SCP_UPLOAD_FAIL=STOP")
+            raise BuilderStop("SSH_STREAM_UPLOAD_FAIL=STOP")
 
     def _scp_from(self, remote: str, local: Path) -> None:
-        ensure_private_dir(local.parent)
-        cmd = _scp_base(self.session) + [f"{self.session.user}@{_scp_host(self.session.host)}:{remote}", str(local)]
-        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=90)
+        quoted = shlex.quote(remote)
+        remote_cmd = _privileged_bash_command(self.session, f"cat {quoted}")
+        try:
+            proc = subprocess.run(
+                _ssh_base(self.session) + [remote_cmd],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=90,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BuilderStop("SSH_STREAM_DOWNLOAD_TIMEOUT=STOP") from exc
         if proc.returncode:
-            raise BuilderStop("SCP_DOWNLOAD_FAIL=STOP")
-        os.chmod(local, 0o600)
+            raise BuilderStop("SSH_STREAM_DOWNLOAD_FAIL=STOP")
+        ensure_private_dir(local.parent)
+        fd, tmp_name = tempfile.mkstemp(prefix=".stream-", dir=local.parent)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(proc.stdout)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, local)
+            os.chmod(local, 0o600)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
 
     def initialize_owner(self, run_id: str) -> None:
         self._run(owner_initialize_script(run_id, self.ports), "OWNER_INIT=PASS")
