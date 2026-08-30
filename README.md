@@ -31,7 +31,7 @@
                  │
           PP-LAB-01 / 1 IP
           ├─ TCP/<PORT_I>   → xray@pp-lab-i   → PP-LAB-I
-          ├─ TCP/<PORT_II>  → xray@pp-lab-ii  → PP-LAB-II
+          ├─ TCP/<PORT_II>  → xray@pp-lab-ii   → PP-LAB-II
           └─ UDP/<PORT_III> → hysteria2       → PP-LAB-III
 ```
 
@@ -112,6 +112,21 @@
 - `DECISION` — `G4 — PP-LAB-III: PASS`.
 
 Финальная G4-запись: [`docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md`](docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md).
+
+## Builder checkpoint — 2026-08-30
+
+- `FACT` — `PrivatPirat Reproducible Node Builder v0.1` реализован как Python + system OpenSSH workflow для smartphone-first запуска из Termux.
+- `FACT` — reviewed `--apply` entrypoint armed; Builder поддерживает direct root и capability-based passwordless `sudo -n` transport.
+- `FACT` — last local verification: 46 unit tests PASS, render check PASS, structural checks PASS.
+- `FACT` — clean-room SSH identity и требуемая privilege capability проверены до deployment.
+- `FACT` — на checkpoint 2026-08-30 clean-room route deployment ещё не начат; server writes = 0.
+- `TODO` — выполнить один clean-room Builder acceptance run и получить фактический verdict.
+
+Актуальные записи:
+
+- [`docs/evidence/PP-LAB-BUILDER-PREDEPLOY-CHECKPOINT-2026-08-30.md`](docs/evidence/PP-LAB-BUILDER-PREDEPLOY-CHECKPOINT-2026-08-30.md)
+- [`docs/handoff/PRIVATPIRAT-REPRODUCIBLE-NODE-BUILDER-HANDOFF-2026-08-30.md`](docs/handoff/PRIVATPIRAT-REPRODUCIBLE-NODE-BUILDER-HANDOFF-2026-08-30.md)
+- [`docs/field-notes/PP-LAB-BUILDER-PREDEPLOY-LESSONS-2026-08-30.md`](docs/field-notes/PP-LAB-BUILDER-PREDEPLOY-LESSONS-2026-08-30.md)
 
 ## Связь с AI Symbiosis Field Notes
 
