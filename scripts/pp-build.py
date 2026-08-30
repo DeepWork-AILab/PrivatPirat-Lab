@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """PrivatPirat Reproducible Node Builder v0.1.
 
-R3-CODE-3 checkpoint. The deployment engine is implemented behind a hard
-CLI gate. This revision adds OpenSSH multiplexing, durable Builder-owned
-resume state, explicit restart/isolation acceptance, network-aware formal
-verdicts, and independent HTTP/HTTPS probes. No public CLI path can perform
-server writes until a separate R3-SERVER change enables it.
+The explicitly authorized ``--apply`` path runs the staged I -> II -> III
+deployment engine. CODE-6 adds owner-approved operational metadata arguments,
+an explicit one-run TOFU option, and useful sanitized Builder STOP codes. Route
+rendering, deployment transactions, rollback and acceptance logic are unchanged.
 """
 from __future__ import annotations
 
@@ -36,7 +35,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping, Protocol, Sequence
 
-BUILDER_VERSION = "0.1.0-r3-code-5"
+BUILDER_VERSION = "0.1.0-r3-code-6"
 SUPPORTED_OS = ("ubuntu", "24.04", "x86_64")
 MIN_MEMORY_KIB = 512 * 1024
 MIN_ROOT_FREE_KIB = 1024 * 1024
@@ -512,6 +511,14 @@ def sanitize_error(message: str | None) -> str:
     return re.sub(r"[\r\n]+", " ", safe).strip()[:240]
 
 
+def format_builder_stop(message: str | None) -> str:
+    """Keep controlled Builder error codes useful without exposing raw errors."""
+    value = str(message or "BUILDER_STOP_UNKNOWN=STOP").strip()
+    if re.fullmatch(r"[A-Z][A-Z0-9_]*(?:=[A-Za-z0-9_.:/><-]+)?", value):
+        return value[:240]
+    return sanitize_error(value)
+
+
 def public_report(values: Mapping[str, object]) -> dict[str, object]:
     if set(values) - PUBLIC_FIELDS:
         raise ValueError("public report contains non-allowlisted fields")
@@ -720,8 +727,18 @@ def _scp_host(host: str) -> str:
 
 def pin_host_key(host: str, port: int, expected: str, directory: Path) -> Path:
     host, expected = validate_host(host), validate_fingerprint(expected)
+    observed, scan = observe_host_key(host, port, directory)
+    if not secrets.compare_digest(observed, expected):
+        raise BuilderStop("HOST_KEY_MISMATCH=STOP")
+    known = directory / "known_hosts"
+    write_private(known, scan)
+    return known
+
+
+def observe_host_key(host: str, port: int, directory: Path) -> tuple[str, str]:
+    host = validate_host(host)
     ensure_private_dir(directory)
-    candidate, known = directory / "known_hosts.candidate", directory / "known_hosts"
+    candidate = directory / "known_hosts.candidate"
     try:
         scan = subprocess.run(["ssh-keyscan", "-T", "8", "-p", str(port), "-t", "ed25519", host], text=True, capture_output=True, timeout=12)
         if scan.returncode or not scan.stdout.strip():
@@ -731,15 +748,19 @@ def pin_host_key(host: str, port: int, expected: str, directory: Path) -> Path:
         match = re.search(r"\b(SHA256:[A-Za-z0-9+/]{43}=?)\b", fp.stdout) if not fp.returncode else None
         if not match:
             raise BuilderStop("HOST_KEY_PARSE_FAIL=STOP")
-        if not secrets.compare_digest(match.group(1), expected):
-            raise BuilderStop("HOST_KEY_MISMATCH=STOP")
-        write_private(known, scan.stdout)
-        return known
+        return validate_fingerprint(match.group(1)), scan.stdout
     finally:
         try:
             candidate.unlink()
         except FileNotFoundError:
             pass
+
+
+def pin_current_host_key(host: str, port: int, directory: Path) -> tuple[str, Path]:
+    fingerprint, scan = observe_host_key(host, port, directory)
+    known = directory / "known_hosts"
+    write_private(known, scan)
+    return fingerprint, known
 
 
 def _ssh_common(session: RemoteSession, *, multiplex: bool) -> list[str]:
@@ -1769,10 +1790,24 @@ class DeploymentEngine:
 
 def perform_target_inputs(args: argparse.Namespace) -> tuple[str, str, str, int, str, str, Path]:
     name = args.profile_name or input("Profile name: ").strip(); slug = slugify(name)
-    host = getpass.getpass("Target VPS IP/hostname: ").strip(); user = input("SSH login: ").strip()
-    fingerprint = getpass.getpass("Expected SSH ED25519 fingerprint (SHA256:...): ").strip(); raw_port = input("SSH port [22]: ").strip()
-    if raw_port and (not raw_port.isdigit() or not 1 <= int(raw_port) <= 65535): raise BuilderStop("SSH_PORT_INVALID=STOP")
-    port = int(raw_port or 22); private = private_root() / slug; known = pin_host_key(host, port, fingerprint, private)
+    host = (args.target_host or getpass.getpass("Target VPS IP/hostname: ")).strip()
+    user = (args.ssh_user or input("SSH login: ")).strip()
+    if args.ssh_port is None:
+        raw_port = input("SSH port [22]: ").strip()
+        if raw_port and (not raw_port.isdigit() or not 1 <= int(raw_port) <= 65535):
+            raise BuilderStop("SSH_PORT_INVALID=STOP")
+        port = int(raw_port or 22)
+    else:
+        port = args.ssh_port
+        if not 1 <= port <= 65535:
+            raise BuilderStop("SSH_PORT_INVALID=STOP")
+    private = private_root() / slug
+    if args.trust_current_host_key:
+        fingerprint, known = pin_current_host_key(host, port, private)
+        print("HOST_KEY_TOFU_PINNED=PASS")
+    else:
+        fingerprint = (args.host_fingerprint or getpass.getpass("Expected SSH ED25519 fingerprint (SHA256:...): ")).strip()
+        known = pin_host_key(host, port, fingerprint, private)
     return name, slug, validate_host(host), port, validate_user(user), validate_fingerprint(fingerprint), known
 
 
@@ -1840,7 +1875,7 @@ def _load_runtime(private_dir: Path, profile_name: str) -> RuntimePrivateInput:
 
 
 def run_deployment_after_gate(args: argparse.Namespace) -> int:
-    """Complete Builder run, deliberately unreachable while --apply is gated.
+    """Complete one explicitly authorized Builder run.
 
     The only human actions are private target input, physical Wi-Fi/mobile
     switching, and leak-oriented DNS acceptance. No route-by-route server
@@ -1995,7 +2030,14 @@ def render_check() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser=argparse.ArgumentParser(prog="pp-build"); mode=parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--local-check",action="store_true"); mode.add_argument("--render-check",action="store_true"); mode.add_argument("--preflight-only",action="store_true"); mode.add_argument("--apply",action="store_true",help="execute reviewed deployment flow after explicit R3-SERVER authorization")
-    parser.add_argument("--profile-name"); return parser
+    parser.add_argument("--profile-name")
+    parser.add_argument("--target-host",help="owner-approved operational target address")
+    parser.add_argument("--ssh-user",help="owner-approved SSH login")
+    parser.add_argument("--ssh-port",type=int,metavar="PORT")
+    trust=parser.add_mutually_exclusive_group()
+    trust.add_argument("--host-fingerprint",help="expected public ED25519 SHA256 fingerprint")
+    trust.add_argument("--trust-current-host-key",action="store_true",help="explicit one-run TOFU: pin the currently presented ED25519 key")
+    return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2010,7 +2052,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run_deployment_after_gate(args)
         return run_preflight(args)
     except BuilderStop as exc:
-        print(sanitize_error(str(exc))); print("VERDICT=STOP"); return 2
+        print(format_builder_stop(str(exc))); print("VERDICT=STOP"); return 2
     except KeyboardInterrupt:
         print("INTERRUPTED=STOP"); return 130
     except Exception as exc:

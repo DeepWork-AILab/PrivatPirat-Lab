@@ -41,11 +41,17 @@ Builder must reproduce those three independently selectable routes on a clean Ub
 - privileged stage/inventory commands use system OpenSSH;
 - root-owned payloads use SSH stream transport instead of ordinary-user staging.
 
-`FACT` — last local verification: 46 tests PASS, render check PASS, structural check PASS.
+`FACT` — verification before CODE-6: 46 tests PASS, render check PASS, structural check PASS.
+
+`DECISION / CODE-6` — после доказанного operator blocker разрешены owner-approved CLI metadata (`target host`, SSH login/port, public host-key fingerprint) и явный одноразовый `--trust-current-host-key` для случая недоступной независимой provider console. TOFU закрепляет текущий ED25519 key, но не выдаётся за независимую identity verification. Passwords, private keys и route secrets по-прежнему запрещены в CLI. Controlled Builder STOP codes больше не должны скрываться как generic token redaction.
+
+`FACT` — CODE-6 local verification: 49 tests PASS, local prerequisite check PASS, render check PASS; семь критических route render/apply functions сохранили исходные SHA-256 invariants.
 
 ## 4. Clean-room target state
 
-`FACT` — target SSH host identity has already been independently authenticated.
+`FACT` — ранее сохранённый ожидаемый fingerprint не совпал с ключом, предъявленным во время первого запуска Builder; Builder остановился до SSH authentication и server writes.
+
+`DECISION` — независимая provider console недоступна; владелец отдельно разрешил CODE-6 и одноразовый TOFU для текущего clean-room run. После первого закрепления любое последующее изменение ключа остаётся STOP condition.
 
 `FACT` — provider-issued SSH identity is non-root.
 
@@ -71,7 +77,7 @@ Do not create another parallel project. Do not manually configure routes on the 
 
 Conceptual flow:
 
-`private target input → pinned host identity → privilege probe → clean-room inventory → I build/verify → II build/verify + I regression → III build/verify + I+II regression → client bundle → sanitized verdict`
+`owner-approved target metadata → verified fingerprint or explicit TOFU pin → privilege probe → clean-room inventory → I build/verify → II build/verify + I regression → III build/verify + I+II regression → client bundle → sanitized verdict`
 
 Human actions should be limited to:
 

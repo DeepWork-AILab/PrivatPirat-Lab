@@ -50,4 +50,16 @@ This checkpoint intentionally omits working addresses, host-key values, login cr
 
 `DECISION` — Builder implementation checkpoint: `PASS / READY FOR CLEAN-ROOM ACCEPTANCE`.
 
-`TODO` — run one explicitly authorized clean-room Builder acceptance against the independently verified target and obtain `PASS`, `PARTIAL` or `FAIL` from the real I → II → III sequence.
+`TODO` — run one explicitly authorized clean-room Builder acceptance against the selected target under an allowed trust mode and obtain `PASS`, `PARTIAL` or `FAIL` from the real I → II → III sequence.
+
+## CODE-6 addendum — operator trust flow
+
+- `FACT` — the first real Builder invocation stopped before SSH authentication, local run-state creation or server writes because the entered expected fingerprint did not match the currently presented ED25519 key.
+- `FACT` — the controlled error code was incorrectly hidden by generic token sanitization; independent provider console access was not operational.
+- `DECISION` — the owner approved CODE-6: target host, SSH login/port and public host-key fingerprint may be supplied as owner-approved CLI metadata; passwords, private keys and route secrets remain forbidden in CLI.
+- `DECISION` — the owner approved explicit one-run TOFU for this clean-room run. TOFU pins the currently presented ED25519 key locally and does not claim independent first-contact identity authentication. Any later change of the pinned key remains a STOP condition.
+- `FACT` — CODE-6 verification completed with 49 tests PASS, local prerequisite check PASS and render check PASS.
+- `FACT` — SHA-256 structural invariants for all seven protected route render/apply functions remained unchanged from the reviewed CODE-5 baseline.
+- `FACT` — clean-room route deployment and Builder server write count remain zero at this addendum.
+
+`DECISION` — Builder remains `PASS / READY FOR CLEAN-ROOM ACCEPTANCE` under the explicitly approved CODE-6 trust mode.

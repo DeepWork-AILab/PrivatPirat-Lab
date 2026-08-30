@@ -71,6 +71,8 @@ class Tests(unittest.TestCase):
         raw="https://example.invalid/x 203.0.113.7 123e4567-e89b-12d3-a456-426614174000 ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
         safe=pp.sanitize_error(raw)
         self.assertNotIn("203.0.113.7",safe); self.assertNotIn("123e4567",safe); self.assertIn("[URI REDACTED]",safe)
+        self.assertEqual(pp.format_builder_stop("HOST_KEY_FINGERPRINT_INVALID=STOP"),"HOST_KEY_FINGERPRINT_INVALID=STOP")
+        self.assertEqual(pp.format_builder_stop("SSH_PASSWORDLESS_SUDO_REQUIRED=STOP"),"SSH_PASSWORDLESS_SUDO_REQUIRED=STOP")
 
     def test_public_allowlist(self):
         self.assertEqual(pp.public_report({"phase":"PRECHECK","verdict":"PASS"})["verdict"],"PASS")
@@ -114,9 +116,47 @@ class Tests(unittest.TestCase):
         a=pp.target_binding("example.com","root",22,fp); b=pp.target_binding("example.com","ubuntu",22,fp)
         self.assertRegex(a,r"^[0-9a-f]{64}$"); self.assertNotEqual(a,b)
 
-    def test_sensitive_values_not_cli(self):
+    def test_verified_and_tofu_host_key_pinning(self):
+        fp="SHA256:"+"A"*43
+        scan="example.invalid ssh-ed25519 AAAATEST\n"
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(pp,"observe_host_key",return_value=(fp,scan)):
+            directory=Path(tmp)/"trust"
+            known=pp.pin_host_key("example.invalid",22,fp,directory)
+            self.assertEqual(known.read_text(),scan)
+            self.assertEqual(stat.S_IMODE(known.stat().st_mode),0o600)
+            observed,tofu_known=pp.pin_current_host_key("example.invalid",22,directory)
+            self.assertEqual(observed,fp); self.assertEqual(tofu_known.read_text(),scan)
+            with self.assertRaisesRegex(pp.BuilderStop,"HOST_KEY_MISMATCH"):
+                pp.pin_host_key("example.invalid",22,"SHA256:"+"B"*43,directory)
+
+    def test_operator_metadata_cli_and_secrets_boundary(self):
         opts={o for a in pp.build_parser()._actions for o in a.option_strings}
-        for bad in ("--host","--expected-host-key","--ssh-port","--sni","--cover","--password"): self.assertNotIn(bad,opts)
+        for expected in ("--target-host","--ssh-user","--ssh-port","--host-fingerprint","--trust-current-host-key"): self.assertIn(expected,opts)
+        for bad in ("--sni","--cover","--password","--private-key"): self.assertNotIn(bad,opts)
+        with self.assertRaises(SystemExit):
+            pp.build_parser().parse_args(["--apply","--host-fingerprint","SHA256:"+"A"*43,"--trust-current-host-key"])
+
+    def test_target_inputs_accept_owner_approved_metadata(self):
+        fp="SHA256:"+"A"*43
+        args=pp.build_parser().parse_args([
+            "--apply","--profile-name","Foxy Baby","--target-host","192.0.2.10",
+            "--ssh-user","vps","--ssh-port","22","--host-fingerprint",fp,
+        ])
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(pp,"private_root",return_value=Path(tmp)), mock.patch.object(pp,"pin_host_key",return_value=Path(tmp)/"known_hosts") as pin:
+            values=pp.perform_target_inputs(args)
+        self.assertEqual(values[2:6],("192.0.2.10",22,"vps",fp))
+        pin.assert_called_once()
+
+    def test_explicit_tofu_pins_observed_key_without_printing_it(self):
+        fp="SHA256:"+"B"*43
+        args=pp.build_parser().parse_args([
+            "--apply","--profile-name","Foxy Baby","--target-host","192.0.2.10",
+            "--ssh-user","vps","--ssh-port","22","--trust-current-host-key",
+        ])
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(pp,"private_root",return_value=Path(tmp)), mock.patch.object(pp,"pin_current_host_key",return_value=(fp,Path(tmp)/"known_hosts")), mock.patch("builtins.print") as output:
+            values=pp.perform_target_inputs(args)
+        self.assertEqual(values[2:6],("192.0.2.10",22,"vps",fp))
+        output.assert_called_once_with("HOST_KEY_TOFU_PINNED=PASS")
 
     def test_apply_dispatches_to_reviewed_deployment_engine(self):
         with mock.patch.object(pp,"run_deployment_after_gate", return_value=0) as runner:
