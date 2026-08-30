@@ -1,10 +1,10 @@
 # PrivatPirat Reproducible Node Builder v0.1 — Handoff
 
 **Checkpoint date:** 2026-08-30  
-**Project:** DeepWork AIHub / PrivatPirat Lab  
+**Project:** DeepWork AILab / PrivatPirat Lab  
 **Canonical repo:** `DeepWork-AILab/PrivatPirat-Lab`  
 **Branch:** `main`  
-**Status:** Builder implementation ready; clean-room deployment not yet started
+**Status:** Clean-room acceptance `STOP`; Builder runtime integration debugging required; no route accepted
 
 ## 1. Read first
 
@@ -12,8 +12,9 @@
 2. `README.md`
 3. `docs/EXPERIMENT_PROTOCOL.md`
 4. `docs/evidence/PP-LAB-BUILDER-PREDEPLOY-CHECKPOINT-2026-08-30.md`
-5. accepted G2/G3/G4 evidence
-6. current `scripts/pp-build.py`
+5. `docs/evidence/PP-LAB-BUILDER-CLEANROOM-STOP-2026-08-31.md`
+6. accepted G2/G3/G4 evidence
+7. current `scripts/pp-build.py`
 
 Current GitHub `main` is authoritative over chat history.
 
@@ -29,7 +30,7 @@ Builder must reproduce those three independently selectable routes on a clean Ub
 
 ## 3. Builder implementation checkpoint
 
-`FACT` — current Builder commit at this handoff is `a4f3cd69d3b17ae848cfc6bc4f1ec0757ec98389`.
+`FACT` — current GitHub `main` commit at this handoff is `ccf58e26de5cca2eef60f54f2efda236bab57ff8`.
 
 `FACT` — CODE-4 armed `--apply` to dispatch into the already reviewed deployment engine.
 
@@ -47,6 +48,16 @@ Builder must reproduce those three independently selectable routes on a clean Ub
 
 `FACT` — CODE-6 local verification: 49 tests PASS, local prerequisite check PASS, render check PASS; семь критических route render/apply functions сохранили исходные SHA-256 invariants.
 
+`FACT` — clean-room execution exposed three runtime defects that predeploy unit/render checks had not covered:
+
+- embedded Python newline escaping in I/II/III stage scripts;
+- incomplete rollback of empty Builder parent directories and a client profile differing from the accepted empty-`SpiderX` baseline;
+- parser-incompatible `.conf` suffix for ephemeral Xray JSON verification files.
+
+`FACT` — these defects were corrected on `main` through commits `dbe1bed4a4d07c6cdfecf42c1d27316161ab9457`, `c047d73fa7a652c7d47fcb7bad70a44c4ad542a0` and `ccf58e26de5cca2eef60f54f2efda236bab57ff8`.
+
+`FACT` — current local verification after those corrections: 52 tests PASS, local prerequisite check PASS and render check PASS. This is not an end-to-end Builder acceptance PASS.
+
 ## 4. Clean-room target state
 
 `FACT` — ранее сохранённый ожидаемый fingerprint не совпал с ключом, предъявленным во время первого запуска Builder; Builder остановился до SSH authentication и server writes.
@@ -57,21 +68,25 @@ Builder must reproduce those three independently selectable routes on a clean Ub
 
 `FACT` — passwordless sudo capability to UID 0 has been independently observed.
 
-`FACT` — no route deployment has started on the target and no Builder server write has occurred at this handoff.
+`FACT` — multiple failed development runs reached Route I. The server configuration test, systemd service and listener reached healthy state, but the Termux-local client verifier did not establish the required data path.
+
+`FACT` — every observed failed Route I run reported scoped rollback PASS. No route reached acceptance, no client bundle is ready and formal multi-network acceptance was not run.
+
+`STOP CONDITION` — do not claim the target is clean from rollback markers alone. Before any future server write, perform exactly one read-only inventory confirming the absence of Builder paths, users, units, listeners and other relevant state.
 
 Operational address, login data, host-key values and other sensitive target data are intentionally omitted.
 
 ## 5. Existing authorization
 
-A prior server gate was approved for one clean-room target/run. Because CODE-5 changed privileged execution semantics, the run should proceed only under the final reviewed `sudo` change packet already agreed in the workstream. Do not reinterpret this handoff as general delegated authorization or permission for another target.
+The previously approved one-run server gate ended in an honest clean-room `STOP`. It is consumed. Local/offline diagnosis and repository fixes may continue, but a new server-write acceptance run requires a fresh explicit owner authorization after the local verifier blocker is isolated and tested. Do not reinterpret this handoff as general delegated authorization or permission for another target.
 
 ## 6. Immediate goal in the next chat
 
-One task only:
+One task only, in two strictly separated phases:
 
-> Run the existing Builder once against the clean-room target and drive the staged I → II → III acceptance to PASS or an honest STOP.
+> First, reproduce and isolate the remaining Termux-local Xray verifier failure without VPS writes, add the smallest regression coverage, and restore `READY FOR CLEAN-ROOM ACCEPTANCE`. Only then request a fresh server gate and run one clean-room I → II → III acceptance to PASS or an honest STOP.
 
-Do not create another parallel project. Do not manually configure routes on the VPS. Do not add helper scripts, wrapper layers or new code gates unless the Builder exposes a real blocker that can be demonstrated by one distinguishing read-only test.
+Do not create another parallel project. Do not manually configure routes on the VPS. Do not replay the prior inline deployment wrappers. Do not add helper scripts, wrapper layers or new code gates unless a remaining blocker is demonstrated by one distinguishing local test.
 
 ## 7. Intended run
 
@@ -120,4 +135,4 @@ If manual server repair is required, Builder acceptance is FAIL until the correc
 
 ## 10. Next useful action
 
-Start from the existing Builder, not from another round of architecture work. Keep the operator path minimal and let Builder itself reveal the next real blocker, if any.
+Do not perform another live Builder run yet. Start with the actual Android/Termux client binary and a generated local verification fixture, capture its real startup output, and prove that the ephemeral verifier can open SOCKS and parse its route-specific configuration without using the VPS. After that proof and regression coverage, request a fresh server gate for one clean-room run.
