@@ -260,7 +260,8 @@ class Tests(unittest.TestCase):
     def test_route_renderers(self):
         i=json.loads(pp.render_xray_server_config(pp.Route.I,23451,I,"cover.example","C"*43)); ii=json.loads(pp.render_xray_server_config(pp.Route.II,23452,II,"cover.example","D"*43))
         self.assertEqual(i["inbounds"][0]["streamSettings"]["network"],"raw"); self.assertEqual(ii["inbounds"][0]["streamSettings"]["network"],"xhttp")
-        ci=json.loads(pp.render_xray_client_config(pp.Route.I,"192.0.2.10",23451,I,"cover.example",10808)); self.assertEqual(ci["outbounds"][0]["streamSettings"]["realitySettings"]["fingerprint"],"firefox")
+        ci=json.loads(pp.render_xray_client_config(pp.Route.I,"192.0.2.10",23451,I,"cover.example",10808)); reality=ci["outbounds"][0]["streamSettings"]["realitySettings"]
+        self.assertEqual(reality["fingerprint"],"firefox"); self.assertEqual(reality["spiderX"],"")
         hy=pp.render_hysteria_client_config("192.0.2.10",23453,III,10808); self.assertIn("pinSHA256",hy); self.assertIn("insecure: true",hy)
 
     def test_bundle_permissions_and_manifest_sanitized(self):
@@ -274,6 +275,15 @@ class Tests(unittest.TestCase):
         restart=pp.server_action_script(pp.Route.II,23452,"restart"); stop=pp.server_action_script(pp.Route.II,23452,"stop")
         self.assertIn("systemctl restart",restart); self.assertNotIn("systemctl stop",restart); self.assertIn("OLD_PID",restart); self.assertIn("NEW_PID",restart)
         self.assertIn("systemctl stop",stop); self.assertIn("! ss -H -ltn",stop); self.assertIn("pp-lab-i.service",stop)
+
+    def test_failed_stage_rollbacks_remove_empty_builder_parents(self):
+        for script in (
+            pp.stage_i_apply_script(PORTS.route_i_tcp),
+            pp.stage_iii_apply_script(PORTS.route_iii_udp),
+            pp.rollback_script(pp.Route.I, PORTS.route_i_tcp),
+            pp.rollback_script(pp.Route.III, PORTS.route_iii_udp),
+        ):
+            self.assertIn("rmdir /etc/privatpirat /usr/local/lib/privatpirat", script)
 
     def test_restart_is_followed_by_client_data_path_and_isolation_by_unavailable(self):
         ex=FakeExecutor(); ver=FakeVerifier(); ledger=pp.AcceptanceLedger()

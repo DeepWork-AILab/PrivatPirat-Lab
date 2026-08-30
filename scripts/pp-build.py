@@ -1049,7 +1049,7 @@ def render_xray_client_config(route: Route, host: str, port: int, material: Rout
         "network": "raw" if route is Route.I else "xhttp", "security": "reality",
         "realitySettings": {
             "fingerprint": "firefox", "serverName": cover, "password": material.public_key,
-            "shortId": material.short_id, "spiderX": "/",
+            "shortId": material.short_id, "spiderX": "",
         },
     }
     if route is Route.II:
@@ -1137,7 +1137,7 @@ def stage_i_apply_script(port: int) -> str:
     unit = _systemd_unit("pp-lab-i", f"{XRAY_INSTALL} run -config /etc/privatpirat/pp-lab-i/config.json")
     return f'''set -euo pipefail
 ROOT={REMOTE_ROOT!r}; CFG=/etc/privatpirat/pp-lab-i/config.json; MAT="$ROOT/material-I.json"; XRAY={XRAY_INSTALL!r}
-rollback() {{ systemctl disable --now pp-lab-i.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-i.service; rm -rf /etc/privatpirat/pp-lab-i; userdel pp-lab-i >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/xray-{XRAY_VERSION}; rm -f "$MAT"; systemctl daemon-reload >/dev/null 2>&1 || true; }}
+rollback() {{ systemctl disable --now pp-lab-i.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-i.service; rm -rf /etc/privatpirat/pp-lab-i; userdel pp-lab-i >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/xray-{XRAY_VERSION}; rm -f "$MAT"; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true; }}
 trap 'rollback' ERR HUP INT TERM
 [ "$(id -u)" = 0 ]; [ -f "$ROOT/{archive.name}" ] && [ -f "$ROOT/runtime.json" ]; ! id pp-lab-i >/dev/null 2>&1
 ! ss -H -ltn | awk '{{print $4}}' | grep -Eq ':{port}$'
@@ -1183,7 +1183,7 @@ def stage_ii_apply_script(port: int) -> str:
     unit = _systemd_unit("pp-lab-ii", f"{XRAY_INSTALL} run -config /etc/privatpirat/pp-lab-ii/config.json")
     return f'''set -euo pipefail
 ROOT={REMOTE_ROOT!r}; CFG=/etc/privatpirat/pp-lab-ii/config.json; MAT="$ROOT/material-II.json"; XRAY={XRAY_INSTALL!r}
-rollback() {{ systemctl disable --now pp-lab-ii.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-ii.service; rm -rf /etc/privatpirat/pp-lab-ii; userdel pp-lab-ii >/dev/null 2>&1 || true; rm -f "$MAT" "$ROOT"/ii.*; systemctl daemon-reload >/dev/null 2>&1 || true; }}
+rollback() {{ systemctl disable --now pp-lab-ii.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-ii.service; rm -rf /etc/privatpirat/pp-lab-ii; userdel pp-lab-ii >/dev/null 2>&1 || true; rm -f "$MAT" "$ROOT"/ii.*; rmdir /etc/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true; }}
 trap 'rollback' ERR HUP INT TERM
 [ -x "$XRAY" ] && [ -f "$ROOT/runtime.json" ]; systemctl is-active --quiet pp-lab-i.service
 I_HASH_BEFORE="$(sha256sum /etc/privatpirat/pp-lab-i/config.json | awk '{{print $1}}')"; ! id pp-lab-ii >/dev/null 2>&1; ! ss -H -ltn | awk '{{print $4}}' | grep -Eq ':{port}$'
@@ -1215,7 +1215,7 @@ def stage_iii_apply_script(port: int) -> str:
     unit = _systemd_unit("pp-lab-iii", f"{HYSTERIA_INSTALL} server -c /etc/privatpirat/pp-lab-iii/config.yaml")
     return f'''set -euo pipefail
 ROOT={REMOTE_ROOT!r}; DIR=/etc/privatpirat/pp-lab-iii; CFG="$DIR/config.yaml"; MAT="$ROOT/material-III.json"; HY={HYSTERIA_INSTALL!r}
-rollback() {{ if [ -n "${{TEST_PID:-}}" ]; then kill "$TEST_PID" >/dev/null 2>&1 || true; fi; systemctl disable --now pp-lab-iii.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-iii.service; rm -rf "$DIR"; userdel pp-lab-iii >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}; rm -f "$MAT" "$ROOT/{spec.name}" "$ROOT/iii.auth" "$ROOT/iii-validate.log"; systemctl daemon-reload >/dev/null 2>&1 || true; }}
+rollback() {{ if [ -n "${{TEST_PID:-}}" ]; then kill "$TEST_PID" >/dev/null 2>&1 || true; fi; systemctl disable --now pp-lab-iii.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-iii.service; rm -rf "$DIR"; userdel pp-lab-iii >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}; rm -f "$MAT" "$ROOT/{spec.name}" "$ROOT/iii.auth" "$ROOT/iii-validate.log"; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true; }}
 trap 'rollback' ERR HUP INT TERM
 systemctl is-active --quiet pp-lab-i.service; systemctl is-active --quiet pp-lab-ii.service
 I_HASH_BEFORE="$(sha256sum /etc/privatpirat/pp-lab-i/config.json | awk '{{print $1}}')"; II_HASH_BEFORE="$(sha256sum /etc/privatpirat/pp-lab-ii/config.json | awk '{{print $1}}')"
@@ -1285,15 +1285,15 @@ ss -H {flag} | awk '{{print $4}}' | grep -Eq ':{port}$'
 def rollback_script(route: Route, port: int | None = None) -> str:
     if route is Route.I:
         body = f'''systemctl disable --now pp-lab-i.service >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/pp-lab-i.service; rm -rf /etc/privatpirat/pp-lab-i; userdel pp-lab-i >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/xray-{XRAY_VERSION}; rm -rf {REMOTE_ROOT}; systemctl daemon-reload >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/pp-lab-i.service; rm -rf /etc/privatpirat/pp-lab-i; userdel pp-lab-i >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/xray-{XRAY_VERSION}; rm -rf {REMOTE_ROOT}; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true
 ! id pp-lab-i >/dev/null 2>&1'''
     elif route is Route.II:
         body = f'''systemctl disable --now pp-lab-ii.service >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/pp-lab-ii.service; rm -rf /etc/privatpirat/pp-lab-ii; userdel pp-lab-ii >/dev/null 2>&1 || true; rm -f {REMOTE_ROOT}/material-II.json {REMOTE_ROOT}/ii.*; systemctl daemon-reload >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/pp-lab-ii.service; rm -rf /etc/privatpirat/pp-lab-ii; userdel pp-lab-ii >/dev/null 2>&1 || true; rm -f {REMOTE_ROOT}/material-II.json {REMOTE_ROOT}/ii.*; rmdir /etc/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl is-active --quiet pp-lab-i.service; ! id pp-lab-ii >/dev/null 2>&1'''
     else:
         body = f'''systemctl disable --now pp-lab-iii.service >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/pp-lab-iii.service; rm -rf /etc/privatpirat/pp-lab-iii; userdel pp-lab-iii >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}; rm -f {REMOTE_ROOT}/material-III.json {REMOTE_ROOT}/{ARTIFACTS["hysteria-linux-amd64"].name} {REMOTE_ROOT}/iii.*; systemctl daemon-reload >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/pp-lab-iii.service; rm -rf /etc/privatpirat/pp-lab-iii; userdel pp-lab-iii >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}; rm -f {REMOTE_ROOT}/material-III.json {REMOTE_ROOT}/{ARTIFACTS["hysteria-linux-amd64"].name} {REMOTE_ROOT}/iii.*; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl is-active --quiet pp-lab-i.service; systemctl is-active --quiet pp-lab-ii.service; ! id pp-lab-iii >/dev/null 2>&1'''
     listener = ""
     if port is not None:
