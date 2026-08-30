@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import re
 import stat
 import sys
 import tempfile
@@ -94,6 +95,23 @@ class Tests(unittest.TestCase):
     def test_artifact_hashes_and_versions(self):
         self.assertEqual(len(pp.ARTIFACT_SHA256),4); self.assertEqual(pp.XRAY_VERSION,"26.3.27"); self.assertEqual(pp.HYSTERIA_VERSION,"2.12.1")
         for d in pp.ARTIFACT_SHA256.values(): self.assertRegex(d,r"^[0-9a-f]{64}$")
+
+    def test_embedded_python_in_stage_scripts_compiles(self):
+        scripts = (
+            pp.stage_i_apply_script(PORTS.route_i_tcp),
+            pp.stage_ii_apply_script(PORTS.route_ii_tcp),
+            pp.stage_iii_apply_script(PORTS.route_iii_udp),
+        )
+        pattern = re.compile(
+            r"python3[^\n]*<<'(?P<tag>[^']+)'[^\n]*\n(?P<body>.*?)\n(?P=tag)",
+            re.DOTALL,
+        )
+        bodies = []
+        for script in scripts:
+            for match in pattern.finditer(script):
+                bodies.append(match.group("body"))
+                compile(match.group("body"), f"<{match.group('tag')}>", "exec")
+        self.assertGreaterEqual(len(bodies), 6)
 
     def test_private_permissions(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1166,7 +1166,7 @@ runtime,uf,kf,sf,cfgf,matf,port=sys.argv[1:]
 cover=json.load(open(runtime))["cover_hostname"]; u=pathlib.Path(uf).read_text().strip(); sid=pathlib.Path(sf).read_text().strip(); lines=pathlib.Path(kf).read_text().splitlines()
 priv=next(x.split(": ",1)[1] for x in lines if x.startswith("PrivateKey: ")); pub=next(x.split(": ",1)[1] for x in lines if x.startswith("Password (PublicKey): "))
 cfg={{"log":{{"loglevel":"warning"}},"inbounds":[{{"listen":"0.0.0.0","port":int(port),"protocol":"vless","settings":{{"clients":[{{"id":u,"flow":"xtls-rprx-vision"}}],"decryption":"none"}},"streamSettings":{{"network":"raw","security":"reality","realitySettings":{{"show":False,"target":cover+":443","serverNames":[cover],"privateKey":priv,"shortIds":[sid]}}}}}}],"outbounds":[{{"protocol":"freedom","tag":"direct"}}]}}
-pathlib.Path(cfgf).write_text(json.dumps(cfg,indent=2)+"\n"); pathlib.Path(matf).write_text(json.dumps({{"route":"I","uuid":u,"public_key":pub,"short_id":sid}})+"\n")
+pathlib.Path(cfgf).write_text(json.dumps(cfg,indent=2)+"\\n"); pathlib.Path(matf).write_text(json.dumps({{"route":"I","uuid":u,"public_key":pub,"short_id":sid}})+"\\n")
 __PP_CFG__
 chown root:pp-lab-i "$CFG"; chmod 0640 "$CFG"; chmod 0600 "$MAT"; rm -f "$ROOT/i.uuid" "$ROOT/i.keys" "$ROOT/i.sid"
 "$XRAY" run -test -config "$CFG" >/dev/null 2>&1
@@ -1197,7 +1197,7 @@ import json,pathlib,sys
 runtime,uf,kf,sf,pf,cfgf,matf,port=sys.argv[1:]; cover=json.load(open(runtime))["cover_hostname"]; u=pathlib.Path(uf).read_text().strip(); sid=pathlib.Path(sf).read_text().strip(); path=pathlib.Path(pf).read_text().strip(); lines=pathlib.Path(kf).read_text().splitlines()
 priv=next(x.split(": ",1)[1] for x in lines if x.startswith("PrivateKey: ")); pub=next(x.split(": ",1)[1] for x in lines if x.startswith("Password (PublicKey): "))
 cfg={{"log":{{"loglevel":"warning"}},"inbounds":[{{"listen":"0.0.0.0","port":int(port),"protocol":"vless","settings":{{"clients":[{{"id":u}}],"decryption":"none"}},"streamSettings":{{"network":"xhttp","security":"reality","realitySettings":{{"show":False,"target":cover+":443","serverNames":[cover],"privateKey":priv,"shortIds":[sid]}},"xhttpSettings":{{"path":path,"mode":"auto"}}}}}}],"outbounds":[{{"protocol":"freedom","tag":"direct"}}]}}
-pathlib.Path(cfgf).write_text(json.dumps(cfg,indent=2)+"\n"); pathlib.Path(matf).write_text(json.dumps({{"route":"II","uuid":u,"public_key":pub,"short_id":sid,"xhttp_path":path}})+"\n")
+pathlib.Path(cfgf).write_text(json.dumps(cfg,indent=2)+"\\n"); pathlib.Path(matf).write_text(json.dumps({{"route":"II","uuid":u,"public_key":pub,"short_id":sid,"xhttp_path":path}})+"\\n")
 __PP_CFG__
 chown root:pp-lab-ii "$CFG"; chmod 0640 "$CFG"; chmod 0600 "$MAT"; rm -f "$ROOT"/ii.uuid "$ROOT"/ii.keys "$ROOT"/ii.sid "$ROOT"/ii.path
 "$XRAY" run -test -config "$CFG" >/dev/null 2>&1
@@ -1237,7 +1237,7 @@ for _ in $(seq 1 30); do if ss -H -lun | awk '{{print $4}}' | grep -Eq ':{port}$
 kill "$TEST_PID" >/dev/null 2>&1 || true; wait "$TEST_PID" >/dev/null 2>&1 || true; [ "$SEEN" = 1 ]; rm -f "$ROOT/iii-validate.log"
 PIN="$(openssl x509 -in "$DIR/server.crt" -outform DER | sha256sum | awk '{{print $1}}')"; python3 - "$ROOT/iii.auth" "$PIN" "$MAT" <<'__PP_MAT__'
 import json,pathlib,sys
-authf,pin,matf=sys.argv[1:]; pathlib.Path(matf).write_text(json.dumps({{"route":"III","auth":pathlib.Path(authf).read_text().strip(),"pin_sha256":pin}})+"\n")
+authf,pin,matf=sys.argv[1:]; pathlib.Path(matf).write_text(json.dumps({{"route":"III","auth":pathlib.Path(authf).read_text().strip(),"pin_sha256":pin}})+"\\n")
 __PP_MAT__
 chmod 0600 "$MAT"; rm -f "$ROOT/iii.auth"
 cat > /etc/systemd/system/pp-lab-iii.service <<'__PP_UNIT__'
