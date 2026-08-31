@@ -98,7 +98,7 @@ Human actions should be limited to:
 
 - local target/trust input;
 - normal OpenSSH authentication;
-- private REALITY cover input;
+- выбор или подтверждение REALITY cover; если владелец явно разрешил его использование в текущем приватном операторском чате, агент сам подставляет уже известное точное значение в готовую команду;
 - physical Wi-Fi/mobile switching when requested;
 - leak-oriented DNS checkpoint;
 - explicit stop/decision if Builder reports unexpected state.
@@ -106,6 +106,7 @@ Human actions should be limited to:
 ## 8. Important UX/process lessons
 
 - Do not make the human shuttle operational data through chat when local consumption is possible.
+- Не заставлять владельца повторно набирать или переносить уже предоставленные owner-approved IP/SSH metadata либо REALITY target/SNI: в пределах явно разрешённого приватного run агент включает точные значения в операторскую команду сам.
 - Capability must be smoke-tested before implementation assumes root, filesystem layout or platform behavior.
 - Do not use hard-coded `/tmp` paths for Termux tests; use platform-safe temp APIs.
 - Generated `__pycache__` is not a source change.
