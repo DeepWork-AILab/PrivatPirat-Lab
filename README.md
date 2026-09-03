@@ -30,14 +30,16 @@
 клиент вручную выбирает один маршрут
                  │
           PP-LAB-01 / 1 IP
-          ├─ TCP/<PORT_I>   → xray@pp-lab-i   → PP-LAB-I
-          ├─ TCP/<PORT_II>  → xray@pp-lab-ii   → PP-LAB-II
-          └─ UDP/<PORT_III> → hysteria2       → PP-LAB-III
+          ├─ TCP/<PORT_I>   → xray.service        → PP-LAB-I
+          ├─ TCP/<PORT_II>  → xray@pp-lab-ii     → PP-LAB-II
+          └─ UDP/<PORT_III> → pp-lab-iii.service → PP-LAB-III
 ```
 
-Каждый маршрут запускается, останавливается, тестируется и используется независимо. Автоматическое переключение, балансировка, общий failover, Control Plane и subscription endpoint не входят в эксперимент.
+`FACT` — на текущем accepted node `PP-LAB-I` фактически обслуживается `xray.service`; существующий template instance `xray@pp-lab-i.service` является `inactive/disabled` и не используется как фактический Route I runtime.
 
-Один VPS остаётся общей точкой отказа. Три маршрута на нём дают транспортное разнообразие, но не создают высокую доступность.
+Каждый маршрут запускается, останавливается, тестируется и используется независимо. Автоматическое переключение, балансировка, общий failover и Control Plane не входят в экспериментальный baseline.
+
+Один VPS остаётся общей точкой отказа. Три маршрута на нём дают транспортное разнообразие, но не создают высокую доступность и не меняют reputation одного и того же provider egress IP.
 
 ## Граница со Space Signal
 
@@ -113,6 +115,24 @@
 
 Финальная G4-запись: [`docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md`](docs/evidence/PP-LAB-III-G4-PASS-2026-08-29.md).
 
+## Maintenance checkpoint — 2026-09-03
+
+- `FACT` — read-only audit подтвердил двухконтурный egress: IPv4 остаётся provider-direct; IPv6 идёт через отдельный Cloudflare WARP WireGuard interface.
+- `FACT` — WARP настроен IPv6-only (`::/0`); глобальный IPv4 WARP route не включён.
+- `FACT` — WARP service `active/enabled`; Docker и AmneziaWG не были нарушены.
+- `FACT` — фактические runtime units: Route I = `xray.service`, Route II = `xray@pp-lab-ii.service`, Route III = `pp-lab-iii.service`; все три были active на финальной проверке.
+- `FACT` — local-only Python/cloudflared listeners идентифицированы как штатные PrivatPirat delivery/one-tap services; неизвестный UDP listener идентифицирован как WARP WireGuard listen socket.
+- `FACT` — обнаружен небезопасный password-based root SSH access на публичном endpoint при одновременно рабочей mobile ED25519 identity.
+- `FACT` — SSH hardening завершён: password login отключён, root оставлен public-key-only, `MaxAuthTries` снижен до 3; независимый post-change key-only login — PASS.
+- `FACT` — secret-bearing WARP config/account files приведены к `0600 root:root`.
+- `FACT` — после maintenance WARP, I/II/III и AmneziaWG остались active; failed systemd units = 0; reboot не выполнялся.
+- `DECISION` — текущий WARP IPv6-only path сохранить; не переводить весь IPv4 egress в WARP на основном узле.
+- `DECISION` — bare ChatGPT `curl` 403 не считать достаточным acceptance verdict; нормальный browser/app доступ фиксируется отдельно как operational observation.
+- `TODO` — доказать WARP reboot recovery отдельным контролируемым тестом после появления независимого backup node.
+- `TODO` — поднять provider-diverse backup node, затем выполнить согласованную ротацию старых client credentials/SSH identities.
+
+Санитизированная запись: [`docs/evidence/PP-LAB-01-EGRESS-SSH-MAINTENANCE-2026-09-03.md`](docs/evidence/PP-LAB-01-EGRESS-SSH-MAINTENANCE-2026-09-03.md).
+
 ## Builder checkpoint — 2026-08-30
 
 - `FACT` — `PrivatPirat Reproducible Node Builder v0.1` реализован как Python + system OpenSSH workflow для smartphone-first запуска из Termux.
@@ -164,4 +184,4 @@ PrivatPirat Lab соответствует этой концепции **усл�
 
 ## Лицензия
 
-Лицензия пока не выбрана. Публичная доступность репозитория сама по себе не предоставляет разрешение на копирование, распространение или создание производных работ. Решение о лицензии — отдельный TODO.
+Лицензия пока не выбрана. Публичная доступность репозитория сама по себе не предоставляет разрешения на копирование, распространение или создание производных работ. Решение о лицензии — отдельный TODO.
