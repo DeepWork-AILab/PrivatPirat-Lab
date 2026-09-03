@@ -84,6 +84,39 @@ Security scanner, guardrail и wrapper — такой же код, как осн
 
 > Smartphone-first — это не «скрипт запускается на Android». Это значит, что весь verified path от authorization до recovery не требует возвращаться к ноутбуку или превращать человека в транспортный слой.
 
+## Seed E — Egress reputation vs transport diversity
+
+### Working title
+
+**Почему три VPN-протокола не спасают один плохой IP**
+
+### Thesis
+
+Transport diversity и egress diversity решают разные классы отказов. VLESS/RAW, VLESS/XHTTP и Hysteria2 могут по-разному переживать блокировки транспорта, но если все они заканчиваются на одном provider egress IP, IP-based anti-abuse и reputation filtering остаются общей точкой отказа.
+
+### Field episode — 2026-09-03
+
+- несколько принятых транспортных маршрутов продолжали работать, но identity-sensitive web access столкнулся с WAF/anti-abuse symptoms;
+- смена транспорта внутри того же VPS не меняла provider egress identity;
+- аккуратно ограниченный IPv6-only WARP path создал отдельный egress без перевода всего IPv4 traffic и без разрушения Docker/Amnezia/принятых маршрутов;
+- bare HTTP curl оказался плохим acceptance proof для browser-oriented WAF: operational browser/app observation и HTTP-client WAF result пришлось разделить;
+- параллельный security audit обнаружил, что публичный root SSH всё ещё допускал password authentication; fail-closed key test остановил hardening до тех пор, пока key-only path не был реально доказан.
+
+### Reader takeaway
+
+При проектировании устойчивости сначала классифицировать отказ:
+
+1. transport / DPI failure;
+2. provider/IP reputation failure;
+3. identity/session/anti-fraud failure;
+4. node/provider availability failure.
+
+Переключатель протокола полезен только для первого класса и не должен называться полноценным failover, если egress и provider остаются теми же.
+
+### Evidence boundary
+
+Не публиковать working IP, точный WARP address, SSH fingerprints, ports, credentials, client URIs или сырые WAF/SSH logs.
+
 ## Editorial gate
 
 Ни один seed не объявлять финальной статьёй до clean-room Builder result. После реального run обновить:
