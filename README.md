@@ -136,12 +136,13 @@
 ## One-Tap persistent delivery checkpoint — 2026-09-08
 
 - `FACT` — ранее принятые `PP-LAB-I`, `PP-LAB-II` и `PP-LAB-III` не изменялись; delivery origin был повторно подтверждён как loopback-only.
-- `FACT` — Cloudflare Named Tunnel достиг healthy state и заменил временный Quick Tunnel runtime.
-- `FACT` — stable custom-domain HTTPS hostname доставил private subscription с составом exactly 2 VLESS + 1 Hysteria2.
+- `FACT` — Cloudflare Named Tunnel достиг healthy state, заменил временный Quick Tunnel runtime и доставил private subscription через stable custom-domain HTTPS hostname.
 - `FACT` — Android One-Tap artifacts переведены на стабильный hostname с сохранением private high-entropy subscription path; Happ импортировал одну подписку с I + II + III.
-- `FACT` — zero-state refresh при выключенном существующем VPN прошёл успешно; профили I/II/III сохранились, рабочий маршрут подключился.
-- `DECISION` — Named Tunnel со стабильным custom-domain hostname является текущим принятым One-Tap bootstrap transport; Quick Tunnel больше не является текущим transport.
-- `TODO` — VPS reboot persistence Named Tunnel ещё не доказан; per-user subscription/credential layer и повторная оценка отдельного Bootstrap Gateway остаются отдельными gates.
+- `FACT` — controlled VPS reboot фактически наблюдался, boot identity изменилась; runtimes I/II/III, loopback delivery service и Named Tunnel connector service вернулись автоматически.
+- `FACT` — после reboot стабильный публичный HTTPS endpoint остался доступен, а состав subscription остался exactly 2 VLESS + 1 Hysteria2.
+- `FACT` — post-reboot zero-state Happ refresh при выключенном существующем VPN прошёл успешно; I/II/III сохранились, пользователь подтвердил успешную работу. Это persistence/bootstrap verification, а не новая full G2/G3/G4 acceptance.
+- `DECISION` — Named Tunnel со стабильным custom-domain hostname принят как reboot-persistent One-Tap bootstrap transport для этого checkpoint; Quick Tunnel больше не является текущим transport.
+- `TODO` — per-user subscription/credential layer и отдельная оценка необходимости прежнего Bootstrap Gateway остаются следующими gates.
 
 Санитизированная запись: [`docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md`](docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md).
 
