@@ -133,6 +133,18 @@
 
 Санитизированная запись: [`docs/evidence/PP-LAB-01-EGRESS-SSH-MAINTENANCE-2026-09-03.md`](docs/evidence/PP-LAB-01-EGRESS-SSH-MAINTENANCE-2026-09-03.md).
 
+## One-Tap persistent delivery checkpoint — 2026-09-08
+
+- `FACT` — ранее принятые `PP-LAB-I`, `PP-LAB-II` и `PP-LAB-III` не изменялись; delivery origin был повторно подтверждён как loopback-only.
+- `FACT` — Cloudflare Named Tunnel достиг healthy state и заменил временный Quick Tunnel runtime.
+- `FACT` — stable custom-domain HTTPS hostname доставил private subscription с составом exactly 2 VLESS + 1 Hysteria2.
+- `FACT` — Android One-Tap artifacts переведены на стабильный hostname с сохранением private high-entropy subscription path; Happ импортировал одну подписку с I + II + III.
+- `FACT` — zero-state refresh при выключенном существующем VPN прошёл успешно; профили I/II/III сохранились, рабочий маршрут подключился.
+- `DECISION` — Named Tunnel со стабильным custom-domain hostname является текущим принятым One-Tap bootstrap transport; Quick Tunnel больше не является текущим transport.
+- `TODO` — VPS reboot persistence Named Tunnel ещё не доказан; per-user subscription/credential layer и повторная оценка отдельного Bootstrap Gateway остаются отдельными gates.
+
+Санитизированная запись: [`docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md`](docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md).
+
 ## Builder checkpoint — 2026-08-30
 
 - `FACT` — `PrivatPirat Reproducible Node Builder v0.1` реализован как Python + system OpenSSH workflow для smartphone-first запуска из Termux.
