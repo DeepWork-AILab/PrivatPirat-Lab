@@ -178,6 +178,12 @@ The Builder is therefore presented as **active engineering work**, not as a fini
 
 The completed three-route baseline is intentionally separated from later work.
 
+**Immediate priority after the current Foxy Baby / PrivatPirat completion gate:** remove the owner from the manual transport path between the control AI and executors. The target operator UX is:
+
+> From the smartphone, the owner states the end goal in ordinary language → the system turns it into an executable task → selects the appropriate executor → asks for one approval only when a risky write requires it → executes → verifies the result → returns the finished outcome to the owner.
+
+Success means the owner is no longer required to copy commands and results manually between ChatGPT and Termux, Codex/OpenCode, cloud/VPS executors, or equivalent execution surfaces during normal work. The terminal remains available for exceptional diagnostics and recovery, not as the routine message bus. This automation is the first priority after the current Foxy Baby / PrivatPirat work is brought to the agreed completion state; it should reuse the existing control, approval, verification and rollback model rather than introduce a new AI framework without demonstrated need.
+
 Open work includes:
 
 - remediation/rotation of one historical PP-LAB-I client credential that appeared in local shell history; tracked in GitHub issue `#7`;
