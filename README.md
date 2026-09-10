@@ -123,9 +123,34 @@ Evidence: [`docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md`](docs/
 
 A provider-diverse secondary VPS has been deployed and hardened as a separate operational node.
 
-Its maintenance checkpoint confirms key-only administration, default-drop inbound firewall policy, reboot persistence and post-reboot use of all three transport profiles. It is deliberately **not** claimed as another formal G2/G3/G4 node because the complete protocol matrix has not been rerun there.
+The earlier maintenance checkpoint established key-only administration, default-drop inbound firewall policy, reboot persistence and post-reboot use of all three transport profiles.
 
-Evidence: [`docs/evidence/FOXY-BABY-HARDENING-POST-REBOOT-2026-09-04.md`](docs/evidence/FOXY-BABY-HARDENING-POST-REBOOT-2026-09-04.md).
+A later recipient-delivery checkpoint added a stronger product layer without redesigning the three route runtimes:
+
+- one owner-only identity plus three independent recipient identities;
+- independent recipient authentication across all three routes;
+- independent recipient subscription identities;
+- live revoke/rotation proof for one recipient without affecting the other two;
+- old shared operator access revoked after owner-only replacement credentials were proven;
+- stable HTTPS recipient delivery through a persistent Cloudflare Named Tunnel;
+- separate loopback-only persistent origins for Landing and Subscription;
+- three-recipient subscription acceptance with canonical/live exact matching and expected three-profile composition;
+- direct Happ delivery keys confirmed working;
+- controlled-reboot persistence for routes, delivery origins and Named Tunnel connector;
+- failed systemd units after the delivery reboot: `0`.
+
+One product boundary remains partial: on one tested Android/mobile zero-state path with VPN off, the personal Landing returned HTTP success headers but the HTTP/2 response body stalled, while a forced HTTP/1.1 probe began receiving body bytes. The direct origin returned the complete declared body and a read-only Cloudflare control-plane comparison found no explanatory hostname-specific rule difference. The exact carrier/edge/transport cause remains unproven, so no root cause is claimed.
+
+The direct recipient Happ keys remain a working distribution fallback independent of that Landing UX issue.
+
+Foxy Baby is deliberately **not** claimed as another formal G2/G3/G4 node yet: the private Android/mobile matrix has passed, but the complete formal Wi-Fi target-network matrix remains pending under the canonical protocol.
+
+Evidence and continuation:
+
+- [`docs/evidence/FOXY-BABY-HARDENING-POST-REBOOT-2026-09-04.md`](docs/evidence/FOXY-BABY-HARDENING-POST-REBOOT-2026-09-04.md)
+- [`docs/evidence/FOXY-BABY-RECIPIENT-DELIVERY-CHECKPOINT-2026-09-10.md`](docs/evidence/FOXY-BABY-RECIPIENT-DELIVERY-CHECKPOINT-2026-09-10.md)
+- [`docs/handoff/FOXY-BABY-OPERATOR-HANDOFF-2026-09-10.md`](docs/handoff/FOXY-BABY-OPERATOR-HANDOFF-2026-09-10.md)
+- [`docs/field-notes/FOXY-BABY-DELIVERY-LESSONS-AND-ARTICLE-SEEDS-2026-09-10.md`](docs/field-notes/FOXY-BABY-DELIVERY-LESSONS-AND-ARTICLE-SEEDS-2026-09-10.md)
 
 ## Reproducible Node Builder
 
@@ -157,8 +182,10 @@ Open work includes:
 
 - remediation/rotation of one historical PP-LAB-I client credential that appeared in local shell history; tracked in GitHub issue `#7`;
 - local diagnosis and regression coverage for the Builder verifier before another live clean-room run;
-- per-user subscription/credential design for future recipient distribution;
-- capacity and resilience planning for the primary personal node and an additional node.
+- optional one-more-gate diagnosis of the Foxy Baby VPN-off Landing HTTP/2 body-stall, without treating it as a blocker for direct Happ distribution;
+- completion of Foxy Baby's formal Wi-Fi acceptance before any second-node G2/G3/G4 claim;
+- cleanup of obsolete transient Foxy delivery artifacts only after proving they are no longer rollback dependencies;
+- capacity and resilience planning for the primary personal node and additional nodes.
 
 These items do not change the recorded `G2/G3/G4 PASS` of the original experiment unless new regression evidence demonstrates an actual failure.
 
