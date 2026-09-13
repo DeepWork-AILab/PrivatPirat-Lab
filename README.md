@@ -125,6 +125,18 @@ This is a bootstrap/persistence result, not a new G2/G3/G4 route acceptance.
 
 Evidence: [`docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md`](docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md).
 
+## Four-friend recipient layer
+
+A separate additive recipient checkpoint was completed on `PP-LAB-01` on 2026-09-13:
+
+- four independent friend-recipient identities were added without replacing the owner identity;
+- the client subscription header is `DeepWork AILab`;
+- the three visible route labels are `🇺🇸 Privat 🏴‍☠️ Pirat I`, `🇺🇸 Privat 🏴‍☠️ Pirat II`, and `🇺🇸 Privat 🏴‍☠️ Pirat III`;
+- direct Happ subscription links are the current distribution path;
+- an active/clickable Landing-based delivery flow is explicitly deferred to a later separate gate and is not a blocker for the current recipient result.
+
+Evidence: [`docs/evidence/PP-LAB-01-FOUR-FRIEND-RECIPIENT-CHECKPOINT-2026-09-13.md`](docs/evidence/PP-LAB-01-FOUR-FRIEND-RECIPIENT-CHECKPOINT-2026-09-13.md).
+
 ## Secondary node: Foxy Baby
 
 A provider-diverse secondary VPS has been deployed and hardened as a separate operational node.
