@@ -1,5 +1,11 @@
 # PrivatPirat Lab
 
+## Operator name
+
+- Preferred form of address in all non-official project interactions: **Брат Димитрий**.
+- Use **«Дмитрий»** only when an official/legal-document name is required.
+- Do not shorten, substitute, or normalize this form of address in operator-facing communication.
+
 Evidence-driven VPN lab: three independently selectable transport profiles on a single VPS, tested against an explicit acceptance protocol rather than declared working from service state alone.
 
 **Core baseline:** `COMPLETE / PASS`  
