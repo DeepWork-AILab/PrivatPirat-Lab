@@ -279,11 +279,141 @@ class Tests(unittest.TestCase):
                 Path(tmp),
             )
             process = mock.Mock()
+            process.poll.return_value = 1
             with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=False), mock.patch.object(pp.subprocess, "Popen", return_value=process) as popen:
-                self.assertFalse(verifier._verify_round(pp.Route.I, I, 1))
+                with self.assertRaisesRegex(pp.BuilderStop, "CLIENT_VERIFIER_PROCESS_EXIT"):
+                    verifier._verify_round(pp.Route.I, I, 1)
                 self.assertTrue(str(popen.call_args.args[0][-1]).endswith(".json"))
-                self.assertFalse(verifier._verify_round(pp.Route.III, III, 1))
+                with self.assertRaisesRegex(pp.BuilderStop, "CLIENT_VERIFIER_PROCESS_EXIT"):
+                    verifier._verify_round(pp.Route.III, III, 1)
                 self.assertTrue(str(popen.call_args.args[0][-1]).endswith(".yaml"))
+
+    def test_unavailable_rejects_local_client_exit_before_socks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true")}, private,
+            )
+            process = mock.Mock()
+            process.poll.return_value = 1
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=False), mock.patch.object(pp.subprocess, "Popen", return_value=process), mock.patch.object(pp.subprocess, "run") as run:
+                with self.assertRaisesRegex(pp.BuilderStop, "CLIENT_VERIFIER_PROCESS_EXIT"):
+                    verifier.unavailable(pp.Route.I, I)
+            run.assert_not_called()
+            self.assertFalse((private / "verify-I-0.json").exists())
+            log = private / "verify-I-0.log"
+            self.assertTrue(log.exists())
+            self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+
+    def test_unavailable_requires_two_explicit_socks_rejections(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true")}, private,
+            )
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.wait.return_value = 0
+            rejected = [
+                mock.Mock(returncode=97, stdout="", stderr=""),
+                mock.Mock(returncode=97, stdout="", stderr=""),
+            ]
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=True), mock.patch.object(pp.subprocess, "Popen", return_value=process), mock.patch.object(pp.subprocess, "run", side_effect=rejected) as run:
+                self.assertTrue(verifier.unavailable(pp.Route.I, I))
+            self.assertEqual(run.call_count, 2)
+            self.assertFalse((private / "verify-I-0.json").exists())
+            self.assertFalse((private / "verify-I-0.log").exists())
+
+    def test_unavailable_rejects_ambiguous_probe_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true")}, private,
+            )
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.wait.return_value = 0
+            ambiguous = mock.Mock(returncode=28, stdout="", stderr="timeout")
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=True), mock.patch.object(pp.subprocess, "Popen", return_value=process), mock.patch.object(pp.subprocess, "run", return_value=ambiguous):
+                with self.assertRaisesRegex(pp.BuilderStop, "CLIENT_UNAVAILABILITY_AMBIGUOUS"):
+                    verifier.unavailable(pp.Route.I, I)
+            self.assertFalse((private / "verify-I-0.json").exists())
+            self.assertTrue((private / "verify-I-0.log").exists())
+
+    def test_unavailable_is_false_when_data_path_still_responds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true")}, private,
+            )
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.wait.return_value = 0
+            reachable = [
+                mock.Mock(returncode=0, stdout="", stderr=""),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+            ]
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=True), mock.patch.object(pp.subprocess, "Popen", return_value=process), mock.patch.object(pp.subprocess, "run", side_effect=reachable):
+                self.assertFalse(verifier.unavailable(pp.Route.I, I))
+            self.assertFalse((private / "verify-I-0.log").exists())
+
+    def test_verify_round_passes_and_removes_transient_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true")}, private,
+            )
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.wait.return_value = 0
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=True), mock.patch.object(pp.subprocess, "Popen", return_value=process), mock.patch.object(verifier, "_curl_status_body", return_value=(200, "ok")) as status, mock.patch.object(verifier, "_curl_text", return_value="192.0.2.10") as text:
+                self.assertTrue(verifier._verify_round(pp.Route.I, I, 1))
+            self.assertEqual(status.call_count, 2)
+            self.assertEqual(text.call_count, 2)
+            self.assertFalse((private / "verify-I-1.json").exists())
+            self.assertFalse((private / "verify-I-1.log").exists())
+
+    def test_verify_round_data_path_failure_is_classified_and_keeps_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true")}, private,
+            )
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.wait.return_value = 0
+            failure = pp.BuilderStop("CLIENT_DATA_PATH_FAIL=STOP")
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), mock.patch.object(verifier, "_wait_socks", return_value=True), mock.patch.object(pp.subprocess, "Popen", return_value=process), mock.patch.object(verifier, "_curl_status_body", side_effect=failure):
+                with self.assertRaisesRegex(pp.BuilderStop, "CLIENT_HTTP_PROBE_FAIL"):
+                    verifier._verify_round(pp.Route.I, I, 1)
+            self.assertFalse((private / "verify-I-1.json").exists())
+            log = private / "verify-I-1.log"
+            self.assertTrue(log.exists())
+            self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+
+    def test_engine_preserves_controlled_verifier_failure_code(self):
+        ex = FakeExecutor()
+        verifier = FakeVerifier()
+        verifier.verify = mock.Mock(
+            side_effect=pp.BuilderStop("CLIENT_HTTP_PROBE_FAIL=STOP")
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = pp.DeploymentEngine(
+                ex, verifier, Path(tmp) / "bundle", "192.0.2.10",
+                PORTS, RUNTIME, "a" * 32,
+            )
+            with self.assertRaisesRegex(
+                pp.BuilderStop,
+                "STAGE_I_FAIL_CLIENT_HTTP_PROBE_FAIL=STOP",
+            ):
+                engine.build_route(pp.Route.I, pp.NetworkClass.WIFI)
+        self.assertIn(("rollback", pp.Route.I), ex.events)
 
     def test_server_actions_are_separate(self):
         restart=pp.server_action_script(pp.Route.II,23452,"restart"); stop=pp.server_action_script(pp.Route.II,23452,"stop")

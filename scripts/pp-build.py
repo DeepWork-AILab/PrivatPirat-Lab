@@ -9,6 +9,7 @@ rendering, deployment transactions, rollback and acceptance logic are unchanged.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import getpass
 import hashlib
 import ipaddress
@@ -1562,7 +1563,12 @@ class LocalClientVerifier:
     @staticmethod
     def _curl_status_body(socks_port: int, url: str) -> tuple[int, str]:
         cmd = ["curl", "--silent", "--show-error", "--max-time", "20", "--socks5-hostname", f"127.0.0.1:{socks_port}", "--write-out", "\\n%{http_code}", url]
-        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=25)
+        try:
+            proc = subprocess.run(cmd, text=True, capture_output=True, timeout=25)
+        except subprocess.TimeoutExpired as exc:
+            raise BuilderStop("CLIENT_VERIFIER_CURL_TIMEOUT=STOP") from exc
+        except OSError as exc:
+            raise BuilderStop("CLIENT_VERIFIER_EXEC_FAIL=STOP") from exc
         if proc.returncode or "\n" not in proc.stdout:
             raise BuilderStop("CLIENT_DATA_PATH_FAIL=STOP")
         body, raw_status = proc.stdout.rsplit("\n", 1)
@@ -1575,7 +1581,12 @@ class LocalClientVerifier:
     @staticmethod
     def _curl_text(socks_port: int, url: str) -> str:
         cmd = ["curl", "--fail", "--silent", "--show-error", "--max-time", "20", "--socks5-hostname", f"127.0.0.1:{socks_port}", url]
-        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=25)
+        try:
+            proc = subprocess.run(cmd, text=True, capture_output=True, timeout=25)
+        except subprocess.TimeoutExpired as exc:
+            raise BuilderStop("CLIENT_VERIFIER_CURL_TIMEOUT=STOP") from exc
+        except OSError as exc:
+            raise BuilderStop("CLIENT_VERIFIER_EXEC_FAIL=STOP") from exc
         if proc.returncode or not proc.stdout.strip(): raise BuilderStop("CLIENT_DATA_PATH_FAIL=STOP")
         return proc.stdout.strip()
 
@@ -1586,34 +1597,126 @@ class LocalClientVerifier:
         write_private(cfg, render_hysteria_client_config(self.host, self.ports.route_iii_udp, material, socks_port))
         return [str(self.artifacts["client_hysteria"]), "client", "-c", str(cfg)]
 
-    def _verify_round(self, route: Route, material: RouteMaterial, index: int) -> bool:
+    @contextmanager
+    def _client(self, route: Route, material: RouteMaterial, index: int):
         socks = self._free_local_port()
         suffix = "json" if route in {Route.I, Route.II} else "yaml"
         cfg = self.private_dir / f"verify-{route.value}-{index}.{suffix}"
+        log = self.private_dir / f"verify-{route.value}-{index}.log"
         cmd = self._command(route, material, socks, cfg)
-        proc = subprocess.Popen(cmd, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc: subprocess.Popen[str] | None = None
+        ensure_private_dir(log.parent)
+        with log.open("w", encoding="utf-8") as client_log:
+            os.chmod(log, 0o600)
+            try:
+                try:
+                    proc = subprocess.Popen(
+                        cmd, text=True, stdout=client_log,
+                        stderr=subprocess.STDOUT,
+                    )
+                except OSError as exc:
+                    raise BuilderStop("CLIENT_VERIFIER_EXEC_FAIL=STOP") from exc
+                if not self._wait_socks(socks, proc):
+                    if proc.poll() is not None:
+                        raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP")
+                    raise BuilderStop("CLIENT_VERIFIER_SOCKS_TIMEOUT=STOP")
+                yield socks, proc, log
+            finally:
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                try:
+                    cfg.unlink()
+                except FileNotFoundError:
+                    pass
+
+    @staticmethod
+    def _discard_log(path: Path) -> None:
         try:
-            if not self._wait_socks(socks, proc): return False
-            self._curl_status_body(socks, HTTP_PROBE_URL); self._curl_status_body(socks, HTTPS_PROBE_URL)
-            exits = []
-            for url in EXIT_IP_URLS:
-                exits.append(str(ipaddress.ip_address(self._curl_text(socks, url))))
-            return len(set(exits)) == 1 and secrets.compare_digest(exits[0], self.expected_egress_ip)
-        except (BuilderStop, ValueError):
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+    def _verify_round(self, route: Route, material: RouteMaterial, index: int) -> bool:
+        with self._client(route, material, index) as (socks, proc, log):
+            try:
+                self._curl_status_body(socks, HTTP_PROBE_URL)
+            except BuilderStop as exc:
+                if proc.poll() is not None:
+                    raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP") from exc
+                if str(exc).startswith("CLIENT_VERIFIER_"):
+                    raise
+                raise BuilderStop("CLIENT_HTTP_PROBE_FAIL=STOP") from exc
+            try:
+                self._curl_status_body(socks, HTTPS_PROBE_URL)
+            except BuilderStop as exc:
+                if proc.poll() is not None:
+                    raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP") from exc
+                if str(exc).startswith("CLIENT_VERIFIER_"):
+                    raise
+                raise BuilderStop("CLIENT_HTTPS_PROBE_FAIL=STOP") from exc
+            try:
+                exits = [
+                    str(ipaddress.ip_address(self._curl_text(socks, url)))
+                    for url in EXIT_IP_URLS
+                ]
+            except BuilderStop as exc:
+                if proc.poll() is not None:
+                    raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP") from exc
+                if str(exc).startswith("CLIENT_VERIFIER_"):
+                    raise
+                raise BuilderStop("CLIENT_EXIT_PROBE_FAIL=STOP") from exc
+            except ValueError as exc:
+                raise BuilderStop("CLIENT_EXIT_IP_INVALID=STOP") from exc
+            if proc.poll() is not None:
+                raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP")
+            if len(set(exits)) != 1 or not secrets.compare_digest(
+                exits[0], self.expected_egress_ip
+            ):
+                raise BuilderStop("CLIENT_EXIT_IP_MISMATCH=STOP")
+        self._discard_log(log)
+        return True
+
+    @staticmethod
+    def _curl_route_unavailable(socks_port: int, url: str) -> bool:
+        cmd = [
+            "curl", "--silent", "--show-error", "--connect-timeout", "5",
+            "--max-time", "10", "--socks5-hostname",
+            f"127.0.0.1:{socks_port}", "--output", os.devnull, url,
+        ]
+        try:
+            proc = subprocess.run(cmd, text=True, capture_output=True, timeout=15)
+        except subprocess.TimeoutExpired as exc:
+            raise BuilderStop("CLIENT_UNAVAILABILITY_PROBE_TIMEOUT=STOP") from exc
+        except OSError as exc:
+            raise BuilderStop("CLIENT_VERIFIER_EXEC_FAIL=STOP") from exc
+        if proc.returncode == 0:
             return False
-        finally:
-            proc.terminate()
-            try: proc.wait(timeout=3)
-            except subprocess.TimeoutExpired: proc.kill(); proc.wait(timeout=3)
-            try: cfg.unlink()
-            except FileNotFoundError: pass
+        # Curl 97 means the live local SOCKS proxy rejected the outbound
+        # connection during its handshake. Other failures are ambiguous:
+        # endpoint, DNS, TLS and local-runtime failures must not prove isolation.
+        if proc.returncode == 97:
+            return True
+        raise BuilderStop("CLIENT_UNAVAILABILITY_AMBIGUOUS=STOP")
 
     def verify(self, route: Route, material: RouteMaterial, rounds: int = 3) -> bool:
         if rounds < 1: raise ValueError("rounds must be >= 1")
         return all(self._verify_round(route, material, idx) for idx in range(1, rounds + 1))
 
     def unavailable(self, route: Route, material: RouteMaterial) -> bool:
-        return not self._verify_round(route, material, 0)
+        with self._client(route, material, 0) as (socks, proc, log):
+            unavailable = []
+            for url in (HTTP_PROBE_URL, HTTPS_PROBE_URL):
+                unavailable.append(self._curl_route_unavailable(socks, url))
+                if proc.poll() is not None:
+                    raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP")
+            confirmed = all(unavailable)
+        self._discard_log(log)
+        return confirmed
 
 
 def write_client_bundle(directory: Path, host: str, ports: Ports, runtime: RuntimePrivateInput, materials: Mapping[Route, RouteMaterial]) -> list[Path]:
@@ -1675,6 +1778,11 @@ class DeploymentEngine:
         except Exception as rollback_error:
             self.state = State.STOPPED; self._persist(route); raise BuilderStop("ROLLBACK_VERIFICATION_FAIL=STOP") from rollback_error
         self.state = State.ROLLED_BACK; self._persist(route); self.state = State.STOPPED
+        controlled = re.fullmatch(r"([A-Z][A-Z0-9_]*)=STOP", str(error))
+        if controlled:
+            raise BuilderStop(
+                f"STAGE_{route.value}_FAIL_{controlled.group(1)}=STOP"
+            ) from error
         raise BuilderStop(f"STAGE_{route.value}_FAIL=STOP") from error
 
     def _accept_current_network(self, route: Route, network: NetworkClass) -> None:
