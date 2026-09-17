@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <title>Максим — PrivatPirat</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <section class="card" aria-labelledby="title">
+      <div class="mark" aria-hidden="true">
+        <span class="mark-core">P</span>
+      </div>
+
+      <p class="eyebrow">PRIVATPIRAT</p>
+      <h1 id="title">VPN для Максима</h1>
+      <p class="lead">Три защищённых маршрута в одной подписке Happ.</p>
+
+      <div id="ready" class="panel" hidden>
+        <div class="status"><span class="dot"></span> Ссылка проверена</div>
+        <a id="open-happ" class="button button-primary" href="#">Открыть в Happ</a>
+        <a class="button button-secondary" href="https://www.happ.su/main/" rel="noreferrer">Установить Happ</a>
+        <p class="hint">Если Happ уже установлен, нажмите первую кнопку и подтвердите добавление подписки.</p>
+      </div>
+
+      <div id="setup" class="panel" hidden>
+        <p class="setup-title">Подготовка персональной ссылки</p>
+        <p class="hint">Вставьте существующую HTTPS-subscription Максима или прямую ссылку <code>happ://add/…</code>. Значение обрабатывается только на этом устройстве и никуда не отправляется.</p>
+        <label for="subscription">Ссылка подписки</label>
+        <input id="subscription" type="password" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…/s/…">
+        <button id="generate" class="button button-primary" type="button">Создать Landing-ссылку</button>
+        <div id="generated-wrap" hidden>
+          <label for="generated">Готовая ссылка для Максима</label>
+          <textarea id="generated" rows="4" readonly></textarea>
+          <button id="copy" class="button button-secondary" type="button">Скопировать ссылку</button>
+          <a id="test-link" class="text-link" href="#">Перейти к кнопке «Открыть в Happ»</a>
+          <p class="hint warning">Не добавляйте длинную Landing-ссылку в Happ вручную. Сначала откройте её в браузере, затем нажмите кнопку «Открыть в Happ».</p>
+        </div>
+      </div>
+
+      <div id="error" class="error" role="alert" hidden></div>
+      <p class="foot">DeepWork AILab · персональный доступ</p>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,204 @@
+:root {
+  color: #f7f7fb;
+  background: #07070b;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body { min-height: 100%; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(128, 52, 255, .28), transparent 34rem),
+    radial-gradient(circle at 82% 88%, rgba(0, 203, 255, .16), transparent 30rem),
+    #07070b;
+}
+
+.shell {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
+}
+
+.card {
+  width: min(100%, 470px);
+  padding: 34px 24px 26px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 28px;
+  background: linear-gradient(145deg, rgba(28, 27, 39, .94), rgba(12, 12, 18, .94));
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .48);
+  backdrop-filter: blur(20px);
+}
+
+.mark {
+  width: 74px;
+  height: 82px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 18px;
+  border-radius: 24px 24px 30px 30px;
+  background: linear-gradient(145deg, #9d5cff, #6434ef 52%, #00bde7);
+  clip-path: polygon(50% 0, 94% 14%, 88% 70%, 50% 100%, 12% 70%, 6% 14%);
+  filter: drop-shadow(0 14px 24px rgba(113, 61, 238, .36));
+}
+
+.mark-core {
+  font-size: 31px;
+  font-weight: 900;
+  letter-spacing: -.06em;
+  transform: translateX(-1px);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #a98dff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .22em;
+  text-align: center;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(30px, 8vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -.04em;
+  text-align: center;
+}
+
+.lead {
+  margin: 12px auto 26px;
+  max-width: 330px;
+  color: #b8b8c6;
+  font-size: 16px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.panel { display: grid; gap: 12px; }
+
+.status {
+  width: fit-content;
+  margin: 0 auto 4px;
+  padding: 7px 11px;
+  border: 1px solid rgba(91, 239, 171, .2);
+  border-radius: 99px;
+  background: rgba(53, 178, 120, .08);
+  color: #8df2bc;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #64e6a4;
+  box-shadow: 0 0 12px #64e6a4;
+}
+
+.button {
+  min-height: 54px;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 17px;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform .16s ease, filter .16s ease;
+}
+
+.button:active { transform: scale(.985); }
+.button:focus-visible, input:focus-visible, textarea:focus-visible, .text-link:focus-visible { outline: 3px solid #9c7cff; outline-offset: 3px; }
+
+.button-primary {
+  background: linear-gradient(105deg, #8757ff, #6e3df3 55%, #288bdc);
+  box-shadow: 0 12px 30px rgba(101, 56, 236, .3);
+}
+
+.button-secondary {
+  border: 1px solid rgba(255, 255, 255, .13);
+  background: rgba(255, 255, 255, .06);
+}
+
+.hint {
+  margin: 5px 2px 4px;
+  color: #9c9caa;
+  font-size: 13px;
+  line-height: 1.48;
+}
+
+.setup-title { margin: 0; font-weight: 800; }
+
+label {
+  margin-top: 5px;
+  color: #d4d4dd;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+input, textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 14px;
+  background: #0c0c12;
+  color: #f7f7fb;
+  font: inherit;
+}
+
+input { min-height: 50px; padding: 12px 14px; }
+textarea { padding: 12px; resize: none; overflow-wrap: anywhere; }
+
+#generated-wrap { display: grid; gap: 11px; margin-top: 6px; }
+
+.text-link {
+  padding: 7px;
+  color: #bfaeff;
+  font-weight: 750;
+  text-align: center;
+  text-underline-offset: 4px;
+}
+
+.error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 107, 130, .26);
+  border-radius: 14px;
+  background: rgba(180, 37, 66, .12);
+  color: #ffabb9;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.foot {
+  margin: 24px 0 0;
+  color: #686875;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+code { color: #cdbfff; }
+
+@media (max-width: 380px) {
+  .card { padding: 29px 18px 22px; border-radius: 23px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+}
