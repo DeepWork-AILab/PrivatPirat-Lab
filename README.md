@@ -148,7 +148,7 @@ A provider-diverse secondary VPS has been deployed and hardened as a separate op
 
 The earlier maintenance checkpoint established key-only administration, default-drop inbound firewall policy, reboot persistence and post-reboot use of all three transport profiles.
 
-A later recipient-delivery checkpoint added a stronger product layer without redesigning the three route runtimes:
+The historical 2026-09-10 recipient-delivery checkpoint added a stronger product layer without redesigning the three route runtimes:
 
 - one owner-only identity plus three independent recipient identities;
 - independent recipient authentication across all three routes;
@@ -162,13 +162,17 @@ A later recipient-delivery checkpoint added a stronger product layer without red
 - controlled-reboot persistence for routes, delivery origins and Named Tunnel connector;
 - failed systemd units after the delivery reboot: `0`.
 
-One product boundary remains partial: on one tested Android/mobile zero-state path with VPN off, the personal Landing returned HTTP success headers but the HTTP/2 response body stalled, while a forced HTTP/1.1 probe began receiving body bytes. The direct origin returned the complete declared body and a read-only Cloudflare control-plane comparison found no explanatory hostname-specific rule difference. The exact carrier/edge/transport cause remains unproven, so no root cause is claimed.
+At that 2026-09-10 checkpoint, one product boundary remained partial: on one tested Android/mobile zero-state path with VPN off, the personal Landing returned HTTP success headers but the HTTP/2 response body stalled, while a forced HTTP/1.1 probe began receiving body bytes. The direct origin returned the complete declared body and a read-only Cloudflare control-plane comparison found no explanatory hostname-specific rule difference. The exact carrier/edge/transport cause remains unproven, so no root cause is claimed.
 
-The direct recipient Happ keys remain a working distribution fallback independent of that Landing UX issue.
+That historical checkpoint retained direct Happ keys as a distribution fallback. The later 2026-09-23 private Production Closure records a new direct HTTPS front door, nine personal Landings, VPN-off mobile delivery and reboot persistence. This supersedes the old Landing symptom as the latest documented delivery status; it does not prove the cause of the earlier HTTP/2 stall.
+
+The later closure still leaves recipient distribution, separately authorized legacy revoke/decommission and native Apple-client verification open. These are not silently marked complete by the 2026-09-29 owner report about PP-LAB-01.
 
 Foxy Baby is deliberately **not** claimed as another formal G2/G3/G4 node yet: the private Android/mobile matrix has passed, but the complete formal Wi-Fi target-network matrix remains pending under the canonical protocol.
 
 Evidence and continuation:
+
+- [`docs/evidence/FOXY-BABY-DIRECT-DELIVERY-SOURCE-REVIEW-2026-09-29.md`](docs/evidence/FOXY-BABY-DIRECT-DELIVERY-SOURCE-REVIEW-2026-09-29.md) — sanitized review of the later private 2026-09-23 closure
 
 - [`docs/evidence/FOXY-BABY-HARDENING-POST-REBOOT-2026-09-04.md`](docs/evidence/FOXY-BABY-HARDENING-POST-REBOOT-2026-09-04.md)
 - [`docs/evidence/FOXY-BABY-RECIPIENT-DELIVERY-CHECKPOINT-2026-09-10.md`](docs/evidence/FOXY-BABY-RECIPIENT-DELIVERY-CHECKPOINT-2026-09-10.md)
@@ -209,14 +213,20 @@ Success means the owner is no longer required to copy commands and results manua
 
 Open work includes:
 
-- remediation/rotation of one historical PP-LAB-I client credential that appeared in local shell history; tracked in GitHub issue `#7`;
+- remediation/rotation of one historical PP-LAB-I client credential that appeared in local shell history; tracked in GitHub issue `#7`, with a [preparation runbook](docs/handoff/ISSUE-7-CREDENTIAL-ROTATION-PREPARATION-2026-09-29.md);
 - local diagnosis and regression coverage for the Builder verifier before another live clean-room run;
-- optional one-more-gate diagnosis of the Foxy Baby VPN-off Landing HTTP/2 body-stall, without treating it as a blocker for direct Happ distribution;
+- confirm Foxy recipient distribution before a separately authorized legacy revoke/decommission; diagnose the historical HTTP/2 stall only if it becomes relevant again;
 - completion of Foxy Baby's formal Wi-Fi acceptance before any second-node G2/G3/G4 claim;
 - cleanup of obsolete transient Foxy delivery artifacts only after proving they are no longer rollback dependencies;
 - capacity and resilience planning for the primary personal node and additional nodes.
 
 These items do not change the recorded `G2/G3/G4 PASS` of the original experiment unless new regression evidence demonstrates an actual failure.
+
+## Documentation review and continuity
+
+- [Recovery knowledge assessment](docs/field-notes/ENGINEERING-RECOVERY-KNOWLEDGE-ASSESSMENT-2026-09-29.md) — source-linked reusable lessons and limits of the bot search.
+- [Article backlog review](docs/field-notes/ARTICLE-BACKLOG-REVIEW-2026-09-29.md) — preserves the author's existing editorial holds.
+- [Audit discrepancies](docs/field-notes/DOCUMENTATION-AUDIT-2026-09-29.md) — outstanding instruction-scope conflict and evidence limits.
 
 ## Security boundary
 

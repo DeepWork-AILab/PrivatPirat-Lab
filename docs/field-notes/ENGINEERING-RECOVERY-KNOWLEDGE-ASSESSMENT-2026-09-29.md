@@ -5,9 +5,19 @@
 
 ## Finding
 
-The repository and the connected project notes do not identify a separate production bot named “engineering recovery bot.” They do contain enough proven recovery practice to form a useful recovery knowledge base.
+FACT — No separate production bot named “engineering recovery bot” was identified in the sources reviewed here. This is a bounded search result, not proof that no such bot exists. It does not authorize building a replacement or a new autonomous executor.
 
-The material is ready to be recorded as procedures and decision rules. It is not yet sufficient evidence for an autonomous bot with infrastructure write access.
+FACT — Existing records contain useful recovery practice. Link those records from the existing knowledge base before duplicating them. TODO — If the owner means a specific bot or notebook, resolve its exact identity before editing that system.
+
+## Traceable source map
+
+| Reusable lesson | Source | Evidence boundary |
+|---|---|---|
+| Active service can have a dead request handler; certificate coverage can fail after DNS succeeds | [Foxy lessons 3–4](FOXY-BABY-DELIVERY-LESSONS-AND-ARTICLE-SEEDS-2026-09-10.md) | Historical incidents, not current faults |
+| Independent recipient rotation and scoped rollback | [Foxy delivery checkpoint](../evidence/FOXY-BABY-RECIPIENT-DELIVERY-CHECKPOINT-2026-09-10.md) | Does not prove issue #7 remediated |
+| Verifier failure and STOP after scoped rollback | [Builder STOP](../evidence/PP-LAB-BUILDER-CLEANROOM-STOP-2026-08-31.md) | Exact remaining client-verifier cause unproven |
+| Client message versus actual routed application traffic | [Foxy closure source review](../evidence/FOXY-BABY-DIRECT-DELIVERY-SOURCE-REVIEW-2026-09-29.md) | No new live test; Termux was outside the tested route policy |
+| Current recipient-facing result | [PP-LAB-01 owner report](../evidence/PP-LAB-01-RECIPIENT-DELIVERY-OWNER-REPORT-2026-09-29.md) | Owner report, not independent formal replay |
 
 ## Recovery knowledge already demonstrated
 
@@ -100,7 +110,7 @@ A bounded assistant could safely help with:
 
 Infrastructure writes need an explicit access model, approval boundary, credential handling design, audit trail and tested rollback. The current evidence does not justify a general recovery bot that independently selects and runs server changes.
 
-A practical next artifact would be a structured recovery template and a read-only triage assistant. Execution can remain in the existing bounded operator workflow until repeated incidents establish stable, testable playbooks.
+TODO — Use the [existing template in this draft](../templates/ENGINEERING-RECOVERY-RECORD-TEMPLATE.md) for the next actual incident. A read-only triage assistant is an optional proposal, not a new committed project. Keep execution in the existing bounded workflow.
 
 ## Editorial value
 
