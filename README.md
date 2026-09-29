@@ -125,17 +125,22 @@ This is a bootstrap/persistence result, not a new G2/G3/G4 route acceptance.
 
 Evidence: [`docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md`](docs/evidence/PP-LAB-ONE-TAP-NAMED-TUNNEL-PASS-2026-09-08.md).
 
-## Four-friend recipient layer
+## Recipient delivery layer
 
 A separate additive recipient checkpoint was completed on `PP-LAB-01` on 2026-09-13:
 
 - four independent friend-recipient identities were added without replacing the owner identity;
 - the client subscription header is `DeepWork AILab`;
 - the three visible route labels are `🇺🇸 Privat 🏴‍☠️ Pirat I`, `🇺🇸 Privat 🏴‍☠️ Pirat II`, and `🇺🇸 Privat 🏴‍☠️ Pirat III`;
-- direct Happ subscription links are the current distribution path;
-- an active/clickable Landing-based delivery flow is explicitly deferred to a later separate gate and is not a blocker for the current recipient result.
+- direct Happ subscription links were the verified distribution path at that checkpoint;
+- an active/clickable Landing-based delivery flow was deferred at that checkpoint.
 
-Evidence: [`docs/evidence/PP-LAB-01-FOUR-FRIEND-RECIPIENT-CHECKPOINT-2026-09-13.md`](docs/evidence/PP-LAB-01-FOUR-FRIEND-RECIPIENT-CHECKPOINT-2026-09-13.md).
+On 2026-09-29 the owner reported a later operational checkpoint: every current personal recipient link, including the newly added recipient link, opened with VPN disabled; the Landing loaded; and the installation flow completed successfully. This updates the delivery-layer record without creating a new formal route acceptance.
+
+Evidence:
+
+- [`docs/evidence/PP-LAB-01-FOUR-FRIEND-RECIPIENT-CHECKPOINT-2026-09-13.md`](docs/evidence/PP-LAB-01-FOUR-FRIEND-RECIPIENT-CHECKPOINT-2026-09-13.md)
+- [`docs/evidence/PP-LAB-01-RECIPIENT-DELIVERY-OWNER-REPORT-2026-09-29.md`](docs/evidence/PP-LAB-01-RECIPIENT-DELIVERY-OWNER-REPORT-2026-09-29.md)
 
 ## Secondary node: Foxy Baby
 
