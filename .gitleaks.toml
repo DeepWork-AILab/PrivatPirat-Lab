@@ -1,0 +1,42 @@
+title = "DeepWork AILab secret checks"
+[extend]
+useDefault = true
+[[rules]]
+id = "deepwork-connection-uri"
+description = "Connection URI requiring private review"
+regex = '''(?i)(?:vless|vmess|hysteria2|hy2|ss)://[^\s<>"'`]{8,}'''
+
+[[rules.allowlists]]
+description = "Exact dynamic URI source templates, without concrete credentials"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)scripts/pp-build\.py$''']
+regexes = ['''^hysteria2://\{urllib\.parse\.quote\(material\.auth$''', '''^vless://\{material\.uuid\}@\{authority\}\?\{urllib\.parse\.urlencode\(query\)\}\#\{label\}$''']
+[[rules]]
+id = "deepwork-uuid"
+description = "UUID requiring context review"
+regex = '''(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'''
+
+[[rules.allowlists]]
+description = "Audited non-operational fixtures only in Builder self-checks and tests"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)(?:scripts/pp-build\.py|tests/test_pp_build\.py)$''']
+regexes = ['''^123e4567\-e89b\-12d3\-a456\-426614174000$''', '''^123e4567\-e89b\-12d3\-a456\-426614174001$''']
+[[rules]]
+id = "deepwork-subscription-url"
+description = "Private subscription URL requiring context review"
+regex = '''(?i)https?://[^\s<>"'`]+/(?:sub|subscription|subscriptions)/([A-Za-z0-9_-]{16,})(?:[/?#\s"'<>]|$)'''
+secretGroup = 1
+entropy = 3.2
+[[rules]]
+id = "deepwork-config-secret"
+description = "Quoted configuration credential requiring context review"
+regex = '''(?i)(?:password|passwd|privatekey|private_key|shortid|short_id|auth)["']?\s*[:=]\s*["']([^\s"']{8,})["']'''
+secretGroup = 1
+entropy = 3.0
+
+[[allowlists]]
+description = "Audited public Xray archive SHA256; not a credential"
+regexTarget = "secret"
+regexes = ['''^23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae$''']

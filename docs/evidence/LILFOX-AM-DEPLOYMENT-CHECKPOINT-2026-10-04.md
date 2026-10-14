@@ -6,7 +6,7 @@ Status: EXPERIMENTAL. Scope: new ExtraVM Amsterdam VPS only. No existing VPS, DN
 
 - DECISION: The owner resumed this operation after `CLIENT_HTTPS_PROBE_FAIL` and authorized local diagnostics, fixes, and up to three reasoned iterations per failure without separate approval for each command. This applies only to the current `lilfox-am` operation. SSH identity, traffic checks, rollback, and stop conditions remain required.
 - DECISION: Use the approved `lisya_bukhta_deepwork_ailab.html` Library asset for three personal connection pages. Do not redesign it. Do not globally replace `__SUBSCRIPTION_URL__`; set only the subscription meta content.
-- DECISION: Recipients are exactly Кефесия, Ляля, Лилит. Route ports are 443/tcp, 8443/tcp, and 443/udp.
+- DECISION: Recipients are exactly recipient A, recipient B, recipient C. Route ports are 443/tcp, 8443/tcp, and 443/udp.
 
 ## Local observations and correction
 
@@ -300,7 +300,7 @@ Status: EXPERIMENTAL. Scope: new ExtraVM Amsterdam VPS only. No existing VPS, DN
 
 ## Direct recipient landing delivery — owner-confirmed functional checkpoint — 2026-10-06
 
-- DECISION: The immediate goal is functional personal delivery for exactly three recipients — Кефесия/Катя, Ляля and Лилит — before any further Builder work, formal acceptance expansion or visual redesign. The owner requested that the working delivery state be fixed in canon before discussing further landing aesthetics.
+- DECISION: The immediate goal is functional personal delivery for exactly three recipients — recipient A, recipient B and recipient C — before any further Builder work, formal acceptance expansion or visual redesign. The owner requested that the working delivery state be fixed in canon before discussing further landing aesthetics.
 - FACT: The presentation-only landing correction was published to all three existing personal pages with protected backups and rollback. Independent post-publication checks matched the prepared page bodies and confirmed the embedded photo, sun ornament and existing Happ controls were present. This corrected the earlier blue-background/no-photo publication symptom without changing route credentials or subscription contents.
 - FACT: The original direct-delivery hostname remained usable from some contexts but was unreliable in the owner's VPN-off Android/SMS path. A Cloudflare Workers fallback was tested and published, but the owner observed a blank/non-loading mobile result without VPN. That fallback is therefore NOT the canonical recipient distribution path.
 - FACT: A second direct HTTPS hostname based on a DNS-to-IP alias was added to the existing Caddy delivery service on the same separate HTTPS port. The configuration validated, the delivery service restarted successfully, public TLS issuance completed and a verified HTTPS fetch of the existing landing returned the expected DeepWork AILab page. The original hostname continued to serve the same page. Exact host/IP values remain private operational metadata and are intentionally omitted from this public evidence.
@@ -308,7 +308,7 @@ Status: EXPERIMENTAL. Scope: new ExtraVM Amsterdam VPS only. No existing VPS, DN
 - FACT / exact-link correction: A later failure on Android was traced to a corrupted copied URL containing an extra replacement character after the .html suffix. When the three exact clean personal URLs were resent without the stray character, the owner reported: "ссылки работают, всё отлично." Exact working personal URLs remain in the restricted private handoff and are not committed here.
 - FACT / rollback discipline: An attempted HTML-only improvement to make subscription references origin-relative encountered a transient SSH timeout during the atomic replacement stage. The operation invoked its protected rollback and reported ROLLBACK=PASS. Subsequent checks showed the previously published page hashes were restored. This failed attempt did not change route services, credentials or final recipient links.
 - FACT: The currently confirmed functional state is therefore: three existing personal landing URLs on the new direct alias are reachable by the owner without VPN; the owner has confirmed the clean links work; one owner-side Happ import from the new direct alias is confirmed. The exact private URLs/tokens are intentionally excluded from Git.
-- TODO: Independent confirmations from Катя, Ляля and Лилит themselves remain pending unless separately reported. Formal G4/Builder acceptance, repeated reconnect/restart matrix and other deferred acceptance work remain out of scope for this checkpoint.
+- TODO: Independent confirmations from recipient A, recipient B and recipient C themselves remain pending unless separately reported. Formal G4/Builder acceptance, repeated reconnect/restart matrix and other deferred acceptance work remain out of scope for this checkpoint.
 - TODO / visual review: Functional delivery is accepted for continuation, but the owner explicitly states that the current landing still differs from the intended earlier design and that the image treatment is worse. Visual parity is a separate next step; do not disturb the now-working delivery path while addressing it.
 
 **Current practical status:** `PERSONAL_LANDING_DELIVERY=OWNER_CONFIRMED_WORKING`; `RECIPIENT_INDEPENDENT_CONFIRMATION=PENDING`; `VISUAL_PARITY=OPEN`; `FORMAL_ACCEPTANCE=PENDING`.
