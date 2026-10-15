@@ -1,5 +1,9 @@
 import importlib.util
+import hashlib
 import json
+import os
+import subprocess
+from contextlib import nullcontext
 from pathlib import Path
 import re
 import stat
@@ -53,6 +57,8 @@ class FakeExecutor:
     def action(self, route, action): self._event(action,route)
     def fetch_material(self, route): self._event("fetch",route); return self.materials[route]
     def checkpoint(self, run_id, route): self._event("checkpoint",route)
+    def capture_diagnostics(self, route): self._event("capture",route); return False
+    def snapshot_route_i_config(self, destination): self._event("snapshot",pp.Route.I)
     def rollback(self, route): self._event("rollback",route)
     def finalize(self): self._event("finalize",None)
 
@@ -82,6 +88,33 @@ class Tests(unittest.TestCase):
     def test_inventory_and_ports(self):
         inv=pp.parse_inventory(GOOD); self.assertTrue(all(pp.assert_inventory(inv).values())); self.assertEqual(inv.egress_ip,"192.0.2.44")
         values=set(pp.asdict(pp.select_ports(inv)).values()); self.assertEqual(len(values),3); self.assertTrue(values.isdisjoint(inv.listen_tcp|inv.listen_udp))
+
+    def test_requested_ports_distinguish_tcp_and_udp(self):
+        inv=pp.parse_inventory(GOOD)
+        requested=pp.parse_requested_ports("443,8443,443")
+        self.assertEqual(pp.select_ports(inv,requested),pp.Ports(443,8443,443))
+        with self.assertRaisesRegex(pp.BuilderStop,"REQUESTED_PORT_OCCUPIED"):
+            pp.select_ports(pp.parse_inventory(GOOD.replace("LISTEN_UDP=53","LISTEN_UDP=53,443")),requested)
+        with self.assertRaisesRegex(pp.BuilderStop,"REQUESTED_PORT_OCCUPIED"):
+            pp.select_ports(pp.parse_inventory(GOOD.replace("LISTEN_TCP=22,80","LISTEN_TCP=22,80,8443")),requested)
+        for invalid in ("443,443,444", "443,8443", "0,8443,443", "443,8443,65536"):
+            with self.assertRaisesRegex(pp.BuilderStop,"REQUESTED_PORTS_INVALID"):
+                pp.parse_requested_ports(invalid)
+
+    def test_explicit_ssh_identity_requires_private_permissions_and_reaches_ssh_scp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "id_ed25519"
+            key.write_text("fixture", encoding="utf-8")
+            key.chmod(0o600)
+            validated = pp.validated_identity_file(key)
+            session = pp.RemoteSession("192.0.2.10", "root", 22, Path(tmp) / "known_hosts", identity_file=validated)
+            for command in (pp._ssh_base(session), pp._scp_base(session)):
+                self.assertIn("-i", command)
+                self.assertEqual(command[command.index("-i") + 1], str(validated))
+                self.assertIn("IdentitiesOnly=yes", command)
+            key.chmod(0o644)
+            with self.assertRaisesRegex(pp.BuilderStop, "SSH_IDENTITY_FILE_PERMISSIONS"):
+                pp.validated_identity_file(key)
 
     def test_fresh_vs_resume_inventory_clean_requirement(self):
         inv=pp.parse_inventory(GOOD.replace("RELEVANT_FOUND=0","RELEVANT_FOUND=1"))
@@ -251,11 +284,57 @@ class Tests(unittest.TestCase):
                 ex._scp_to(local,"/var/lib/privatpirat-builder/runtime.json")
             argv=" ".join(run.call_args.args[0])
             self.assertIn("sudo -n bash -c",argv)
+            self.assertIn("BatchMode=yes",argv)
+            self.assertNotIn("/tmp/ctl",argv)
             self.assertNotIn("TOP_SECRET_PAYLOAD",argv)
             self.assertNotIn("scp ",argv)
         source=MODULE_PATH.read_text()
         self.assertNotIn("sshpass",source)
         self.assertNotIn("sudo -S",source)
+
+    def test_stream_upload_failure_preserves_full_stderr_privately(self):
+        session=pp.RemoteSession('example.com','root',22,Path('/tmp/kh'),Path('/tmp/ctl'))
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); source=root/'runtime.json'; source.write_bytes(b'private payload')
+            ex=pp.SSHStageExecutor(session,PORTS,RUNTIME,{},root/'private',diagnostic_run_id='a'*32)
+            stderr=b'private diagnostic\xff\n' * 100
+            result=mock.Mock(returncode=255,stderr=stderr)
+            with mock.patch.object(pp.subprocess,'run',return_value=result) as run:
+                for _ in range(2):
+                    with self.assertRaisesRegex(pp.BuilderStop,'^SSH_STREAM_UPLOAD_FAIL=STOP$'):
+                        ex._scp_to(source,'/var/lib/privatpirat-builder/runtime.json')
+            self.assertEqual(run.call_count,2)
+            directory=root/'private'/'diagnostics'/('a'*32)
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode),0o700)
+            records=list(directory.glob('ssh-upload-*.json')); self.assertEqual(len(records),2)
+            for path in records:
+                record=json.loads(path.read_text())
+                self.assertEqual(record['ssh_returncode'],255); self.assertFalse(record['timed_out'])
+                self.assertEqual((directory/record['stderr_file']).read_bytes(),stderr)
+            for path in directory.iterdir(): self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o600)
+
+    def test_stream_upload_timeout_preserves_partial_stderr(self):
+        session=pp.RemoteSession('example.com','root',22,Path('/tmp/kh'),Path('/tmp/ctl'))
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); source=root/'runtime.json'; source.write_bytes(b'fixture')
+            ex=pp.SSHStageExecutor(session,PORTS,RUNTIME,{},root/'private',diagnostic_run_id='b'*32)
+            error=pp.subprocess.TimeoutExpired(['ssh'],90,stderr=b'partial diagnostic\xff')
+            with mock.patch.object(pp.subprocess,'run',side_effect=error):
+                with self.assertRaisesRegex(pp.BuilderStop,'^SSH_STREAM_UPLOAD_TIMEOUT=STOP$'):
+                    ex._scp_to(source,'/var/lib/privatpirat-builder/runtime.json')
+            directory=root/'private'/'diagnostics'/('b'*32)
+            record=json.loads(next(directory.glob('*.json')).read_text())
+            self.assertIsNone(record['ssh_returncode']); self.assertTrue(record['timed_out'])
+            self.assertEqual((directory/record['stderr_file']).read_bytes(),error.stderr)
+
+    def test_stream_upload_diagnostic_write_failure_is_controlled(self):
+        session=pp.RemoteSession('example.com','root',22,Path('/tmp/kh'),Path('/tmp/ctl'))
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); source=root/'runtime.json'; source.write_bytes(b'fixture')
+            ex=pp.SSHStageExecutor(session,PORTS,RUNTIME,{},root/'private',diagnostic_run_id='c'*32)
+            with mock.patch.object(pp.subprocess,'run',return_value=mock.Mock(returncode=255,stderr=b'private')),mock.patch.object(pp,'ensure_private_dir',side_effect=OSError('fixture')):
+                with self.assertRaisesRegex(pp.BuilderStop,'^SSH_UPLOAD_DIAGNOSTIC_SAVE_FAIL=STOP$'):
+                    ex._scp_to(source,'/var/lib/privatpirat-builder/runtime.json')
 
     def test_route_renderers(self):
         i=json.loads(pp.render_xray_server_config(pp.Route.I,23451,I,"cover.example","C"*43)); ii=json.loads(pp.render_xray_server_config(pp.Route.II,23452,II,"cover.example","D"*43))
@@ -397,6 +476,21 @@ class Tests(unittest.TestCase):
             self.assertTrue(log.exists())
             self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
 
+    def test_curl_transport_exit_is_reported_without_stderr(self):
+        result=mock.Mock(returncode=28,stdout="",stderr="sensitive diagnostic")
+        with mock.patch.object(pp.subprocess,"run",return_value=result):
+            with self.assertRaisesRegex(pp.BuilderStop,"CLIENT_CURL_EXIT_28=STOP") as caught:
+                pp.LocalClientVerifier._curl_status_body(10808,"http://example.com/")
+        self.assertNotIn("sensitive",str(caught.exception))
+
+    def test_external_tcp_probe_classifies_provider_path_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            verifier=pp.LocalClientVerifier("192.0.2.10",PORTS,RUNTIME,"192.0.2.10",{},Path(tmp),verify_external_tcp=True)
+            with mock.patch.object(pp.socket,"create_connection",side_effect=OSError("sensitive endpoint")):
+                with self.assertRaisesRegex(pp.BuilderStop,"CLIENT_TCP_PORT_UNREACHABLE=STOP") as caught:
+                    verifier._verify_round(pp.Route.I,I,1)
+            self.assertNotIn("sensitive",str(caught.exception))
+
     def test_engine_preserves_controlled_verifier_failure_code(self):
         ex = FakeExecutor()
         verifier = FakeVerifier()
@@ -415,19 +509,289 @@ class Tests(unittest.TestCase):
                 engine.build_route(pp.Route.I, pp.NetworkClass.WIFI)
         self.assertIn(("rollback", pp.Route.I), ex.events)
 
+    def test_diagnostic_capture_precedes_rollback_even_when_capture_fails(self):
+        for capture_fails in (False, True):
+            ex = FakeExecutor(fail=("capture", pp.Route.I) if capture_fails else None)
+            if not capture_fails:
+                def capture(route):
+                    ex._event("capture", route)
+                    return True
+                ex.capture_diagnostics = capture
+            verifier = FakeVerifier()
+            verifier.verify = mock.Mock(side_effect=pp.BuilderStop("CLIENT_CURL_EXIT_56=STOP"))
+            with tempfile.TemporaryDirectory() as tmp:
+                engine = pp.DeploymentEngine(ex, verifier, Path(tmp) / "bundle", "192.0.2.10", PORTS, RUNTIME, "a" * 32)
+                with mock.patch("builtins.print") as printed:
+                    with self.assertRaisesRegex(pp.BuilderStop, "STAGE_I_FAIL_CLIENT_CURL_EXIT_56=STOP"):
+                        engine.build_route(pp.Route.I, pp.NetworkClass.OPERATOR)
+            self.assertLess(ex.events.index(("capture", pp.Route.I)), ex.events.index(("rollback", pp.Route.I)))
+            self.assertEqual(printed.call_args.args[0], f"DIAGNOSTIC_CAPTURE_I={'FAIL' if capture_fails else 'SAVED'}")
+
+    def test_diagnostic_server_log_is_private_and_stdout_is_silent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp) / "private"
+            session = pp.RemoteSession("192.0.2.10", "root", 22, Path(tmp) / "known_hosts", control_path=Path(tmp) / "control")
+            executor = pp.SSHStageExecutor(session, PORTS, RUNTIME, {}, private, diagnostic_run_id="a" * 32)
+            client_log = private / "verify" / ("a" * 32) / "verify-I-1-1.log"
+            pp.write_private(client_log, "private client handshake detail\n")
+            remote_log = "REALITY: processed invalid connection from private-address\n"
+            result = mock.Mock(returncode=0, stdout=remote_log, stderr="")
+            with mock.patch.object(pp.subprocess, "run", return_value=result) as run, mock.patch("builtins.print") as printed:
+                self.assertTrue(executor.capture_diagnostics(pp.Route.I))
+            printed.assert_not_called()
+            self.assertIn("StrictHostKeyChecking=yes", run.call_args.args[0])
+            server_log = private / "diagnostics" / ("a" * 32) / "server-I.log"
+            status = json.loads((server_log.parent / "status-I.json").read_text())
+            self.assertEqual(server_log.read_text(), remote_log)
+            self.assertEqual(stat.S_IMODE(server_log.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE((server_log.parent / "status-I.json").stat().st_mode), 0o600)
+            self.assertEqual(status["client_logs_saved"], 1)
+            self.assertEqual(status["server_invalid_connection_count"], 1)
+            self.assertNotIn("private-address", json.dumps(status))
+
+    def test_diagnostic_client_logs_are_private_and_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            verifier = pp.LocalClientVerifier(
+                "192.0.2.10", PORTS, RUNTIME, "192.0.2.10",
+                {"client_xray": Path("/bin/true")}, private, preserve_logs=True,
+            )
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.wait.return_value = 0
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), \
+                 mock.patch.object(verifier, "_wait_socks", return_value=True), \
+                 mock.patch.object(pp.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(verifier, "_curl_status_body", return_value=(200, "ok")), \
+                 mock.patch.object(verifier, "_curl_text", return_value="192.0.2.10"):
+                self.assertTrue(verifier._verify_round(pp.Route.I, I, 1))
+                self.assertTrue(verifier._verify_round(pp.Route.I, I, 1))
+            logs = sorted(private.glob("verify-I-1-*.log"))
+            self.assertEqual(len(logs), 2)
+            self.assertTrue(all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in logs))
+            self.assertFalse(list(private.glob("*.json")))
+
+    def test_diagnostic_route_i_only_archives_failed_state_and_never_starts_ii(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            slug = "lilfox-am"
+            state_file = root / "state" / slug / "state.json"
+            private = root / "private" / slug
+            old = pp.PersistentState(pp.BUILDER_VERSION, "a" * 32, "b" * 64, (), PORTS, pp.AcceptanceLedger(), "I", "server_only")
+            pp.save_state(state_file, old)
+            pp.write_private(private / "runtime.json", json.dumps({"cover_hostname": "cover.example"}))
+            session = pp.RemoteSession("192.0.2.10", "root", 22, private / "known_hosts")
+            context = pp.PreflightContext("lilfox-am", slug, session, pp.parse_inventory(GOOD), PORTS, private, state_file.parent, {}, "b" * 64)
+            executor = FakeExecutor()
+            def capture(route):
+                executor._event("capture", route)
+                return True
+            executor.capture_diagnostics = capture
+            args = pp.build_parser().parse_args(["--apply", "--server-only", "--diagnostic-route-i", "--route-ports", "23451,23452,23453"])
+            def preflight(*_args, **_kwargs):
+                self.assertTrue(state_file.exists())
+                return context
+            with mock.patch.object(pp, "state_root", return_value=root / "state"), \
+                 mock.patch.object(pp, "private_root", return_value=root / "private"), \
+                 mock.patch.object(pp, "local_prerequisites", return_value={"ok": True}), \
+                 mock.patch.object(pp, "perform_target_inputs", return_value=("lilfox-am", slug, session.host, 22, "root", "SHA256:" + "A" * 43, session.known_hosts)), \
+                 mock.patch.object(pp, "SSHControlMaster", return_value=nullcontext(session)), \
+                 mock.patch.object(pp, "preflight_session", side_effect=preflight), \
+                 mock.patch.object(pp, "remote_cover_probe"), \
+                 mock.patch.object(pp, "prepare_artifacts", return_value={}), \
+                 mock.patch.object(pp, "SSHStageExecutor", return_value=executor), \
+                 mock.patch.object(pp, "LocalClientVerifier", return_value=FakeVerifier()), \
+                 mock.patch("builtins.print"):
+                self.assertEqual(pp.run_deployment_after_gate(args), 0)
+            self.assertTrue((state_file.parent / ("state.failed-" + old.run_id + ".json")).exists())
+            self.assertEqual(pp.load_state(state_file).accepted_routes, ("I",))
+            self.assertNotIn(("apply", pp.Route.II), executor.events)
+            self.assertNotIn(("apply", pp.Route.III), executor.events)
+            self.assertLess(executor.events.index(("capture", pp.Route.I)), executor.events.index(("checkpoint", pp.Route.I)))
+
+    @staticmethod
+    def config_pair_fixture():
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        private = bytes(range(32))
+        public = X25519PrivateKey.from_private_bytes(private).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+        material = pp.RouteMaterial(pp.Route.I, uuid=I.uuid, public_key=encode(public), short_id=I.short_id)
+        server = pp.render_xray_server_config(pp.Route.I, PORTS.route_i_tcp, material, RUNTIME.cover_hostname, encode(private))
+        client = pp.render_xray_client_config(pp.Route.I, "192.0.2.10", PORTS.route_i_tcp, material, RUNTIME.cover_hostname, 10808)
+        return server, client, material
+
+    def test_config_pair_matches_and_distinguishes_each_field(self):
+        server_text, client_text, _ = self.config_pair_fixture()
+        baseline = pp.compare_route_i_configs(server_text, client_text, "192.0.2.10", PORTS.route_i_tcp)
+        self.assertEqual(set(baseline.values()), {"MATCH"})
+        mutations = [
+            ("DESTINATION", "client", ("outbounds", 0, "settings", "vnext", 0, "address"), "192.0.2.11"),
+            ("DESTINATION", "server", ("inbounds", 0, "port"), 443),
+            ("DESTINATION", "server", ("inbounds", 0, "listen"), "127.0.0.1"),
+            ("UUID", "client", ("outbounds", 0, "settings", "vnext", 0, "users", 0, "id"), II.uuid),
+            ("FLOW", "client", ("outbounds", 0, "settings", "vnext", 0, "users", 0, "flow"), ""),
+            ("SNI", "server", ("inbounds", 0, "streamSettings", "realitySettings", "serverNames"), ["other.example"]),
+            ("SNI", "server", ("inbounds", 0, "streamSettings", "realitySettings", "target"), "other.example:443"),
+            ("SHORT_ID", "client", ("outbounds", 0, "streamSettings", "realitySettings", "shortId"), II.short_id),
+            ("PUBLIC_KEY", "client", ("outbounds", 0, "streamSettings", "realitySettings", "password"), II.public_key),
+            ("PUBLIC_KEY", "server", ("inbounds", 0, "streamSettings", "realitySettings", "privateKey"), "A" * 43),
+        ]
+        for field, side, path, value in mutations:
+            with self.subTest(field=field, side=side, path=path):
+                pair = {"server": json.loads(server_text), "client": json.loads(client_text)}
+                obj = pair[side]
+                for key in path[:-1]: obj = obj[key]
+                obj[path[-1]] = value
+                result = pp.compare_route_i_configs(json.dumps(pair["server"]), json.dumps(pair["client"]), "192.0.2.10", PORTS.route_i_tcp)
+                self.assertEqual(result[field], "MISMATCH")
+                self.assertEqual([key for key in result if result[key] == "MISMATCH"], [field])
+
+    def test_config_pair_malformed_input_and_keys_never_pass(self):
+        server, client, _ = self.config_pair_fixture()
+        for invalid in ("private-invalid-json", "{}", "[]"):
+            with self.subTest(invalid=invalid):
+                result = pp.compare_route_i_configs(invalid, client, "192.0.2.10", PORTS.route_i_tcp)
+                self.assertEqual(set(result.values()), {"MISMATCH"})
+                self.assertNotIn("private-invalid-json", json.dumps(result))
+        config = json.loads(server)
+        config["inbounds"][0]["streamSettings"]["realitySettings"]["privateKey"] = "private-invalid-key"
+        result = pp.compare_route_i_configs(json.dumps(config), client, "192.0.2.10", PORTS.route_i_tcp)
+        self.assertEqual(result["PUBLIC_KEY"], "MISMATCH")
+        del config["inbounds"][0]["settings"]["clients"][0]["id"]
+        self.assertIn("MISMATCH", pp.compare_route_i_configs(json.dumps(config), client, "192.0.2.10", PORTS.route_i_tcp).values())
+
+    def test_config_pair_snapshot_uses_actual_server_file_and_strict_ssh(self):
+        server, _, _ = self.config_pair_fixture()
+        with tempfile.TemporaryDirectory() as tmp:
+            session = pp.RemoteSession("192.0.2.10", "root", 22, Path(tmp) / "known_hosts", control_path=Path(tmp) / "control")
+            executor = pp.SSHStageExecutor(session, PORTS, RUNTIME, {}, Path(tmp) / "private", diagnostic_run_id="a" * 32)
+            destination = Path(tmp) / "private" / "verify" / "server.json"
+            with mock.patch.object(pp.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=server.encode(), stderr=b"")) as run, mock.patch("builtins.print") as printed:
+                executor.snapshot_route_i_config(destination)
+            self.assertIn("StrictHostKeyChecking=yes", run.call_args.args[0])
+            self.assertIn("/etc/privatpirat/pp-lab-i/config.json", run.call_args.args[0][-1])
+            self.assertEqual(destination.read_text(), server)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(destination.parent.stat().st_mode), 0o700)
+            printed.assert_not_called()
+            with mock.patch.object(executor, "_scp_from", side_effect=pp.BuilderStop("private transfer detail")):
+                with self.assertRaisesRegex(pp.BuilderStop, "^SERVER_CONFIG_SNAPSHOT_FAIL=STOP$"):
+                    executor.snapshot_route_i_config(destination)
+
+    def test_config_pair_precedes_each_client_and_probe_and_retains_files(self):
+        server, _, material = self.config_pair_fixture()
+        events = []
+        with tempfile.TemporaryDirectory() as tmp:
+            def snapshot(path):
+                events.append("snapshot")
+                pp.write_private(path, server)
+            verifier = pp.LocalClientVerifier("192.0.2.10", PORTS, RUNTIME, "192.0.2.10", {"client_xray": Path("/bin/true")}, Path(tmp), verify_external_tcp=True, preserve_logs=True, route_i_snapshot=snapshot)
+            process = mock.Mock()
+            process.poll.return_value = None
+            def launch(cmd, **kwargs):
+                events.append("launch")
+                cfg = Path(cmd[-1])
+                result = json.loads(cfg.with_suffix(".comparison.json").read_text())
+                self.assertEqual(set(result.values()), {"MATCH"})
+                return process
+            def probe(_route): events.append("tcp")
+            with mock.patch.object(verifier, "_free_local_port", return_value=10808), \
+                 mock.patch.object(verifier, "_wait_socks", return_value=True), \
+                 mock.patch.object(pp.subprocess, "Popen", side_effect=launch) as popen, \
+                 mock.patch.object(verifier, "_external_tcp_probe", side_effect=probe), \
+                 mock.patch.object(verifier, "_curl_status_body", return_value=(200, "ok")), \
+                 mock.patch.object(verifier, "_curl_text", return_value="192.0.2.10"), \
+                 mock.patch.object(verifier, "_curl_route_unavailable", return_value=True), \
+                 mock.patch("builtins.print") as printed:
+                self.assertTrue(verifier._verify_round(pp.Route.I, material, 1))
+                self.assertTrue(verifier._verify_round(pp.Route.I, material, 1))
+                self.assertTrue(verifier.unavailable(pp.Route.I, material))
+            self.assertEqual(events, ["snapshot", "launch", "tcp", "snapshot", "launch", "tcp", "snapshot", "launch"])
+            self.assertEqual(popen.call_count, 3)
+            self.assertEqual(len(list(Path(tmp).glob("*.server.json"))), 3)
+            self.assertEqual(len(list(Path(tmp).glob("*.comparison.json"))), 3)
+            self.assertEqual(len(list(Path(tmp).glob("*.json"))), 9)
+            self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in Path(tmp).iterdir()))
+            self.assertEqual(stat.S_IMODE(Path(tmp).stat().st_mode), 0o700)
+            self.assertTrue(all(re.fullmatch(r"CONFIG_PAIR_I_[A-Z_]+=MATCH", call.args[0]) for call in printed.call_args_list))
+
+    def test_config_pair_actual_client_mismatch_stops_before_tests_and_rolls_back(self):
+        server, _, material = self.config_pair_fixture()
+        with tempfile.TemporaryDirectory() as tmp:
+            def snapshot(path): pp.write_private(path, server)
+            verifier = pp.LocalClientVerifier("192.0.2.10", PORTS, RUNTIME, "192.0.2.10", {"client_xray": Path("/bin/true")}, Path(tmp) / "verify", verify_external_tcp=True, preserve_logs=True, route_i_snapshot=snapshot)
+            original = verifier._command
+            def actual_file_changed(route, mat, socks, cfg):
+                cmd = original(route, mat, socks, cfg)
+                config = json.loads(cfg.read_text())
+                config["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] = II.uuid
+                pp.write_private(cfg, json.dumps(config))
+                return cmd
+            executor = FakeExecutor()
+            executor.materials[pp.Route.I] = material
+            engine = pp.DeploymentEngine(executor, verifier, Path(tmp) / "bundle", "192.0.2.10", PORTS, RUNTIME, "a" * 32, server_only=True)
+            with mock.patch.object(verifier, "_command", side_effect=actual_file_changed), \
+                 mock.patch.object(pp.subprocess, "Popen") as popen, \
+                 mock.patch.object(pp.socket, "create_connection") as tcp, \
+                 mock.patch.object(verifier, "_curl_status_body") as curl, \
+                 mock.patch("builtins.print") as printed:
+                with self.assertRaisesRegex(pp.BuilderStop, "^STAGE_I_FAIL_ROUTE_I_CONFIG_PAIR_MISMATCH=STOP$"):
+                    engine.build_route(pp.Route.I, pp.NetworkClass.OPERATOR)
+            popen.assert_not_called(); tcp.assert_not_called(); curl.assert_not_called()
+            self.assertLess(executor.events.index(("capture", pp.Route.I)), executor.events.index(("rollback", pp.Route.I)))
+            comparison = json.loads(next((Path(tmp) / "verify").glob("*.comparison.json")).read_text())
+            self.assertEqual(comparison["UUID"], "MISMATCH")
+            self.assertEqual(len(list((Path(tmp) / "verify").glob("*.json"))), 3)
+            self.assertNotIn(material.uuid, str(printed.call_args_list))
+            self.assertNotIn(material.short_id, str(printed.call_args_list))
+            self.assertNotIn(material.public_key, str(printed.call_args_list))
+
+    def test_config_pair_server_changes_and_snapshot_failure_stop_before_client(self):
+        server, _, material = self.config_pair_fixture()
+        for failure in ("server-changed", "snapshot-failed"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                calls = []
+                def snapshot(path):
+                    calls.append(path)
+                    if failure == "snapshot-failed": raise pp.BuilderStop("SERVER_CONFIG_SNAPSHOT_FAIL=STOP")
+                    actual = json.loads(server)
+                    actual["inbounds"][0]["settings"]["clients"][0]["id"] = II.uuid
+                    pp.write_private(path, json.dumps(actual))
+                verifier = pp.LocalClientVerifier("192.0.2.10", PORTS, RUNTIME, "192.0.2.10", {"client_xray": Path("/bin/true")}, Path(tmp) / "verify", preserve_logs=True, route_i_snapshot=snapshot)
+                executor = FakeExecutor()
+                executor.materials[pp.Route.I] = material
+                engine = pp.DeploymentEngine(executor, verifier, Path(tmp) / "bundle", "192.0.2.10", PORTS, RUNTIME, "a" * 32, server_only=True)
+                with mock.patch.object(pp.subprocess, "Popen") as popen, mock.patch("builtins.print"):
+                    with self.assertRaises(pp.BuilderStop): engine.build_route(pp.Route.I, pp.NetworkClass.OPERATOR)
+                self.assertEqual(len(calls), 1)
+                popen.assert_not_called()
+                self.assertIn(("rollback", pp.Route.I), executor.events)
+                self.assertTrue(list((Path(tmp) / "verify").glob("verify-I-1-1.json")))
+
+    def test_config_pair_crypto_missing_stops_before_ssh(self):
+        args = pp.build_parser().parse_args(["--apply", "--server-only", "--diagnostic-route-i"])
+        with mock.patch.object(pp, "local_prerequisites", return_value={"ok": True}), \
+             mock.patch.object(pp, "require_route_i_crypto", side_effect=pp.BuilderStop("ROUTE_I_CRYPTO_UNAVAILABLE=STOP")), \
+             mock.patch.object(pp, "perform_target_inputs") as inputs:
+            with self.assertRaisesRegex(pp.BuilderStop, "ROUTE_I_CRYPTO_UNAVAILABLE=STOP"):
+                pp.run_deployment_after_gate(args)
+        inputs.assert_not_called()
+
+    def test_diagnostic_stage_i_uses_info_without_reality_show(self):
+        ordinary = pp.stage_i_apply_script(443)
+        diagnostic = pp.stage_i_apply_script(443, diagnostic=True)
+        self.assertIn('"loglevel":\'warning\'', ordinary)
+        self.assertIn('"loglevel":\'info\'', diagnostic)
+        self.assertNotIn('date --iso-8601=seconds > "$ROOT/i.journal_since"', ordinary)
+        self.assertIn("i.journal_since", diagnostic)
+        self.assertIn('"show":False', diagnostic)
+
     def test_server_actions_are_separate(self):
         restart=pp.server_action_script(pp.Route.II,23452,"restart"); stop=pp.server_action_script(pp.Route.II,23452,"stop")
         self.assertIn("systemctl restart",restart); self.assertNotIn("systemctl stop",restart); self.assertIn("OLD_PID",restart); self.assertIn("NEW_PID",restart)
-        self.assertIn("systemctl stop",stop); self.assertIn("! ss -H -ltn",stop); self.assertIn("pp-lab-i.service",stop)
-
-    def test_failed_stage_rollbacks_remove_empty_builder_parents(self):
-        for script in (
-            pp.stage_i_apply_script(PORTS.route_i_tcp),
-            pp.stage_iii_apply_script(PORTS.route_iii_udp),
-            pp.rollback_script(pp.Route.I, PORTS.route_i_tcp),
-            pp.rollback_script(pp.Route.III, PORTS.route_iii_udp),
-        ):
-            self.assertIn("rmdir /etc/privatpirat /usr/local/lib/privatpirat", script)
+        self.assertIn("systemctl stop",stop); self.assertIn("then exit 31; fi",stop); self.assertIn("pp-lab-i.service",stop)
 
     def test_restart_is_followed_by_client_data_path_and_isolation_by_unavailable(self):
         ex=FakeExecutor(); ver=FakeVerifier(); ledger=pp.AcceptanceLedger()
@@ -523,6 +887,48 @@ class Tests(unittest.TestCase):
         bad=json.loads(json.dumps(base)); bad["ports"]["route_ii_tcp"]=bad["ports"]["route_i_tcp"]
         with self.assertRaisesRegex(pp.BuilderStop,"PORTS_INVALID"): pp.PersistentState.from_mapping(bad)
 
+    def test_privileged_port_units_receive_only_bind_capability(self):
+        privileged=pp._systemd_unit("pp-lab-i","/bin/true",privileged_port=True)
+        ordinary=pp._systemd_unit("pp-lab-ii","/bin/true")
+        self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE",privileged)
+        self.assertIn("CapabilityBoundingSet=CAP_NET_BIND_SERVICE",privileged)
+        self.assertNotIn("AmbientCapabilities",ordinary)
+        self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE",pp.stage_i_apply_script(443))
+        self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE",pp.stage_iii_apply_script(443))
+        self.assertNotIn("AmbientCapabilities",pp.stage_ii_apply_script(8443))
+
+    def test_server_only_accepts_shared_tcp_udp_port_without_formal_pass(self):
+        ports=pp.Ports(443,8443,443)
+        ex=FakeExecutor(); ver=FakeVerifier(); ledger=pp.AcceptanceLedger()
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle=Path(tmp)/"bundle"
+            engine=pp.DeploymentEngine(ex,ver,bundle,"192.0.2.10",ports,RUNTIME,"a"*32,ledger,server_only=True)
+            engine.initialize()
+            for route in pp.Route:
+                engine.build_route(route,pp.NetworkClass.OPERATOR)
+                self.assertFalse(engine.can_advance(route))
+                engine.accept_server_stage(route)
+                self.assertTrue(engine.can_advance(route))
+                self.assertIs(ledger.route_verdict(route),pp.Verdict.PARTIAL)
+            state=pp.PersistentState(pp.BUILDER_VERSION,"a"*32,"b"*64,("I","II","III"),ports,ledger,acceptance_mode="server_only")
+            loaded=pp.PersistentState.from_mapping(state.to_jsonable())
+            self.assertEqual(loaded.ports,ports)
+            self.assertEqual(loaded.acceptance_mode,"server_only")
+            self.assertIs(engine.finalize_server_only(),pp.Verdict.PARTIAL)
+            self.assertTrue((bundle/"manifest.json").exists())
+        self.assertEqual([event for event in ex.events if event[0]=="checkpoint"],[("checkpoint",r) for r in pp.Route])
+        self.assertEqual(ex.events[-1],("finalize",None))
+
+    def test_server_only_route_failure_rolls_back_current_stage(self):
+        ex=FakeExecutor(fail=("health",pp.Route.II)); ver=FakeVerifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            engine=pp.DeploymentEngine(ex,ver,Path(tmp)/"bundle","192.0.2.10",pp.Ports(443,8443,443),RUNTIME,"a"*32,server_only=True)
+            engine.initialize(); engine.build_route(pp.Route.I,pp.NetworkClass.OPERATOR); engine.accept_server_stage(pp.Route.I)
+            with self.assertRaisesRegex(pp.BuilderStop,"STAGE_II_FAIL"):
+                engine.build_route(pp.Route.II,pp.NetworkClass.OPERATOR)
+        self.assertIn(("rollback",pp.Route.II),ex.events)
+        self.assertNotIn(("rollback",pp.Route.I),ex.events)
+
     def test_finalize_partial_does_not_publish_bundle_or_finalize_remote(self):
         ex=FakeExecutor(); ver=FakeVerifier(); l=pp.AcceptanceLedger()
         with tempfile.TemporaryDirectory() as tmp:
@@ -607,6 +1013,415 @@ class Tests(unittest.TestCase):
         self.assertNotIn("sshpass",s); self.assertNotIn("StrictHostKeyChecking=no",s); self.assertNotIn("UserKnownHostsFile=/dev/null",s)
         self.assertNotRegex(s,r"curl\s+[^\n|]*\|\s*(?:sh|bash)")
         self.assertIn("StrictHostKeyChecking=yes",s); self.assertIn("BatchMode=yes",s)
+
+    def test_saved_loopback_preserves_entire_pair_except_endpoints(self):
+        server, client, _ = self.config_pair_fixture()
+        s, c = json.loads(server), json.loads(client)
+        s['inbounds'][0].update(listen='127.0.0.1', port=23457)
+        c['inbounds'][0].update(listen='127.0.0.1', port=23458)
+        c['outbounds'][0]['settings']['vnext'][0].update(address='127.0.0.1', port=23457)
+        self.assertEqual(set(pp.saved_loopback_pair(server, client, json.dumps(s), json.dumps(c)).values()), {'MATCH'})
+        for field in ('target', 'show', 'privateKey'):
+            changed = json.loads(json.dumps(s))
+            changed['inbounds'][0]['streamSettings']['realitySettings'][field] = 'CHANGED'
+            with self.subTest(field=field), self.assertRaisesRegex(pp.BuilderStop, 'PRESERVATION_FAIL'):
+                pp.saved_loopback_pair(server, client, json.dumps(changed), json.dumps(c))
+        c['log']['loglevel'] = 'debug'
+        with self.assertRaisesRegex(pp.BuilderStop, 'PRESERVATION_FAIL'):
+            pp.saved_loopback_pair(server, client, json.dumps(s), json.dumps(c))
+
+    def test_saved_loopback_scope_stops_before_ssh(self):
+        for extra in ([], ['--server-only', '--diagnostic-route-i'], ['--server-only', '--trust-current-host-key']):
+            args = pp.build_parser().parse_args(['--diagnostic-vps-loopback']+extra)
+            with mock.patch.object(pp, 'SSHControlMaster') as ssh, self.assertRaises(pp.BuilderStop):
+                pp.run_saved_vps_loopback_after_gate(args)
+            ssh.assert_not_called()
+        with self.assertRaises(SystemExit):
+            pp.build_parser().parse_args(['--apply', '--diagnostic-vps-loopback'])
+
+    def test_saved_loopback_transaction_cleanup_and_no_deployment(self):
+        for outcome in ('pass', 'http-fail', 'mismatch'):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); private = root/'private'; source = private/'lilfox-am'/'verify'/('a'*32)
+                pp.ensure_private_dir(source)
+                server, client, _ = self.config_pair_fixture()
+                pp.write_private(source/'verify-I-1-1.server.json', server)
+                pp.write_private(source/'verify-I-1-1.json', client)
+                pp.write_private(private/'lilfox-am'/'known_hosts', 'synthetic pinned key')
+                identity = root/'identity'; pp.write_private(identity, 'synthetic identity')
+                archive = root/'cache'/'lilfox-am'/pp.ARTIFACTS['xray-linux-amd64'].name
+                pp.write_private(archive, 'synthetic archive')
+                fingerprint = 'SHA256:'+'A'*43
+                state = pp.PersistentState(pp.BUILDER_VERSION, 'a'*32, pp.target_binding('192.0.2.10','root',22,fingerprint), (), PORTS, pp.AcceptanceLedger(), 'I', 'server_only')
+                session = pp.RemoteSession('192.0.2.10','root',22,private/'lilfox-am'/'known_hosts',control_path=root/'ctl')
+                events = []
+                class Executor:
+                    def __init__(self, *_args, **_kw): pass
+                    def _run(self, script, marker, **kw): events.append((marker, script))
+                    def _scp_to(self, path, remote): events.append(('upload', remote))
+                    def _scp_from(self, remote, path):
+                        name = remote.rsplit('/',1)[1]
+                        if name == 'server.json':
+                            value = json.loads(server); value['inbounds'][0].update(listen='127.0.0.1', port=23457)
+                            if outcome == 'mismatch': value['log']['loglevel'] = 'debug'
+                        elif name == 'client.json':
+                            value = json.loads(client); value['inbounds'][0].update(listen='127.0.0.1', port=23458)
+                            value['outbounds'][0]['settings']['vnext'][0].update(address='127.0.0.1', port=23457)
+                        elif name == 'result.json':
+                            value = {'loopback_http': {'ok': outcome == 'pass'}, 'error': None, 'processes_remaining': 0, 'listeners_remaining': 0, 'saved_files':['server.log','client.log']}
+                        else: value = {}
+                        pp.write_private(path,json.dumps(value))
+                args = pp.build_parser().parse_args(['--diagnostic-vps-loopback','--server-only','--profile-name','lilfox-am','--target-host','192.0.2.10','--ssh-user','root','--ssh-port','22','--identity-file',str(identity),'--saved-run-id','a'*32])
+                with mock.patch.object(pp,'private_root',return_value=private), mock.patch.object(pp,'cache_root',return_value=root/'cache'), mock.patch.object(pp,'load_state',return_value=state), mock.patch.object(pp,'verify_sha256',return_value=True), mock.patch.object(pp.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='256 '+fingerprint+' synthetic (ED25519)')), mock.patch.object(pp,'SSHControlMaster',return_value=nullcontext(session)), mock.patch.object(pp,'preflight_session'), mock.patch.object(pp,'_load_runtime',return_value=RUNTIME), mock.patch.object(pp,'SSHStageExecutor',Executor), mock.patch.object(pp,'save_state') as save, mock.patch('builtins.print'):
+                    if outcome == 'pass': self.assertEqual(pp.run_saved_vps_loopback_after_gate(args),0)
+                    else:
+                        with self.assertRaises(pp.BuilderStop): pp.run_saved_vps_loopback_after_gate(args)
+                    save.assert_not_called()
+                markers = [e[0] for e in events]
+                self.assertEqual(markers[-1], 'LOOPBACK_CLEANUP=PASS')
+                self.assertEqual('LOOPBACK_FINISHED=SAVED' in markers, outcome != 'mismatch')
+                self.assertNotIn('systemctl', '\n'.join(e[1] for e in events))
+                self.assertEqual((source/'verify-I-1-1.server.json').read_text(), server)
+                self.assertEqual((source/'verify-I-1-1.json').read_text(), client)
+                if outcome != 'mismatch':
+                    status_path, = (private/'lilfox-am'/'diagnostics').glob('*/status-I.json')
+                    status = json.loads(status_path.read_text())
+                    self.assertEqual(status['client_verified'], 'NOT_RECORDED')
+                    self.assertEqual(status['read_client_finished'], 'NOT_RECORDED')
+                    self.assertEqual(status['server_handshake'], 'NOT_RECORDED')
+                    self.assertEqual(stat.S_IMODE(status_path.stat().st_mode), 0o600)
+
+    def test_saved_loopback_agent_watchdog_scope_and_diagnostics(self):
+        compile(pp.SAVED_LOOPBACK_AGENT,'<test-agent>','exec')
+        self.assertIn("'--max-time', '20'",pp.SAVED_LOOPBACK_AGENT)
+        self.assertIn("if not live and not result['loopback_http']['ok']",pp.SAVED_LOOPBACK_AGENT)
+        self.assertIn('child.terminate()',pp.SAVED_LOOPBACK_AGENT)
+        self.assertIn('child.kill()',pp.SAVED_LOOPBACK_AGENT)
+        self.assertIn('signal.SIGHUP',pp.SAVED_LOOPBACK_AGENT)
+        self.assertNotRegex(pp.SAVED_LOOPBACK_AGENT,r"'systemctl'\s*,\s*'(?:start|stop|restart|enable|disable)'")
+        self.assertNotIn('show=',pp.SAVED_LOOPBACK_AGENT)
+
+    def test_paired_saved_stage_preserves_keys_instead_of_regenerating(self):
+        script = pp.stage_i_apply_script(443,diagnostic=True,saved_pair=True)
+        self.assertIn('"$ROOT/source.server.json" "$CFG"',script)
+        self.assertNotIn('uuid.uuid4',script)
+        self.assertNotIn('"$XRAY" x25519',script)
+        self.assertNotIn('openssl rand',script)
+        with self.assertRaises(pp.BuilderStop): pp.stage_i_apply_script(443,saved_pair=True)
+
+    def test_paired_external_template_and_failure_endpoint_are_preserved(self):
+        server, client, material = self.config_pair_fixture()
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); template=root/'template.json'
+            source=json.loads(client); source['outbounds'][0]['streamSettings']['realitySettings']['spiderX']='/retained'
+            pp.write_private(template,json.dumps(source))
+            def snapshot(path): pp.write_private(path,server)
+            v=pp.LocalClientVerifier('192.0.2.10',PORTS,RUNTIME,'192.0.2.10',{'client_xray':Path('/bin/true')},root/'verify',preserve_logs=True,route_i_snapshot=snapshot,route_i_template=template)
+            proc=mock.Mock(); proc.poll.return_value=None
+            with mock.patch.object(v,'_free_local_port',return_value=10809),mock.patch.object(v,'_wait_socks',return_value=True),mock.patch.object(pp.subprocess,'Popen',return_value=proc),mock.patch.object(v,'_curl_status_body',side_effect=[(200,'ok'),pp.BuilderStop('CLIENT_CURL_EXIT_56=STOP')]),mock.patch('builtins.print'):
+                with self.assertRaises(pp.BuilderStop): v._verify_round(pp.Route.I,material,1)
+            actual=json.loads(v.last_route_i_config.read_text())
+            expected=json.loads(json.dumps(source)); expected['inbounds'][0].update(listen='127.0.0.1',port=10809)
+            self.assertEqual(actual,expected)
+            attempt=json.loads(v.last_route_i_config.with_suffix('.attempt.json').read_text())
+            self.assertEqual(attempt['url'],pp.HTTPS_PROBE_URL)
+            self.assertEqual([event['url'] for event in attempt['probe_events']],[pp.HTTP_PROBE_URL,pp.HTTPS_PROBE_URL])
+            self.assertIn('ended_at_epoch',attempt)
+            proc.terminate.assert_called_once()
+            self.assertEqual(json.loads(template.read_text()),source)
+
+    def test_paired_failure_hook_precedes_capture_and_always_rolls_back(self):
+        for hook_fails in (False,True):
+            ex=FakeExecutor(); verifier=FakeVerifier()
+            verifier.verify=mock.Mock(side_effect=pp.BuilderStop('CLIENT_CURL_EXIT_56=STOP'))
+            def hook(route,error):
+                ex.events.append(('control',route))
+                if hook_fails: raise pp.BuilderStop('PAIRED_CONTROL_FAIL=STOP')
+            with tempfile.TemporaryDirectory() as tmp,mock.patch('builtins.print'):
+                engine=pp.DeploymentEngine(ex,verifier,Path(tmp)/'bundle','192.0.2.10',PORTS,RUNTIME,'a'*32,failure_diagnostic=hook)
+                with self.assertRaisesRegex(pp.BuilderStop,'STAGE_I_FAIL_CLIENT_CURL_EXIT_56'):
+                    engine.build_route(pp.Route.I,pp.NetworkClass.OPERATOR)
+            self.assertLess(ex.events.index(('control',pp.Route.I)),ex.events.index(('capture',pp.Route.I)))
+            self.assertLess(ex.events.index(('capture',pp.Route.I)),ex.events.index(('rollback',pp.Route.I)))
+            self.assertNotIn(('apply',pp.Route.II),ex.events)
+
+    def test_paired_live_control_same_process_preservation_cleanup_and_stop(self):
+        for outcome in ('pass','process-changed','config-changed','curl-fail'):
+            with self.subTest(outcome=outcome),tempfile.TemporaryDirectory() as tmp,mock.patch('builtins.print'):
+                root=Path(tmp); server,client,_=self.config_pair_fixture()
+                cfg=root/'verify'/'verify-I-1-1.json'; pp.write_private(cfg,client)
+                pp.write_private(cfg.with_suffix('.server.json'),server)
+                identity={'pid':123,'start_ticks':'42','boot_id':'synthetic','binary_sha256':'a'*64,'config_sha256':'b'*64}
+                info={'identity':identity,'observed_epoch':1,'platform':'synthetic'}
+                pp.write_private(cfg.with_suffix('.server.meta.json'),json.dumps(info))
+                verifier=mock.Mock(last_route_i_config=cfg,last_route_i_probe={'url':pp.HTTPS_PROBE_URL,'started_at_epoch':2,'destination':'192.0.2.10'})
+                session=pp.RemoteSession('192.0.2.10','root',22,root/'known',control_path=root/'ctl')
+                ex=pp.SSHStageExecutor(session,PORTS,RUNTIME,{},root/'private',diagnostic_run_id='a'*32,paired_control=True)
+                events=[]
+                def capture(route):
+                    events.append('capture')
+                    for name in ('server-I.log','server-I.jsonl','status-I.json'): pp.write_private(root/'private'/'diagnostics'/('a'*32)/name,'{}')
+                    return True
+                def download(remote,path):
+                    name=remote.rsplit('/',1)[1]
+                    if name=='server.json': value=json.loads(server)
+                    elif name=='client.json':
+                        value=json.loads(client); value['inbounds'][0].update(listen='127.0.0.1',port=10810)
+                        value['outbounds'][0]['settings']['vnext'][0]['address']='127.0.0.1'
+                        if outcome=='config-changed': value['log']['loglevel']='debug'
+                    elif name=='result.json': value={'error':None,'loopback_http':{'ok':outcome!='curl-fail'},'processes_remaining':0,'listeners_remaining':0,'saved_files':['client.log'],'server_identity_before':identity,'server_identity_after':identity}
+                    else: value={}
+                    pp.write_private(path,json.dumps(value))
+                current=info if outcome!='process-changed' else {'identity':dict(identity,pid=124)}
+                def run(script,marker,**kw): events.append(marker)
+                with mock.patch.object(ex,'route_i_process_info',return_value=current),mock.patch.object(ex,'capture_diagnostics',side_effect=capture),mock.patch.object(ex,'_run',side_effect=run),mock.patch.object(ex,'_scp_to'),mock.patch.object(ex,'_scp_from',side_effect=download),mock.patch.object(ex,'action') as action:
+                    if outcome in ('process-changed','config-changed'):
+                        with self.assertRaises(pp.BuilderStop): ex.paired_failure_control(pp.Route.I,pp.BuilderStop('CLIENT_CURL_EXIT_56=STOP'),verifier)
+                    else: ex.paired_failure_control(pp.Route.I,pp.BuilderStop('CLIENT_CURL_EXIT_56=STOP'),verifier)
+                    with self.assertRaisesRegex(pp.BuilderStop,'ALREADY_USED'):
+                        ex.paired_failure_control(pp.Route.I,pp.BuilderStop('CLIENT_CURL_EXIT_56=STOP'),verifier)
+                    action.assert_not_called()
+                self.assertEqual('LOOPBACK_FINISHED=SAVED' in events,outcome in ('pass','curl-fail'))
+                if outcome!='process-changed':
+                    self.assertEqual(events[-1],'PAIRED_CLEANUP=PASS')
+                    self.assertLess(events.index('capture'),events.index('LIVE_CLIENT_PREPARE=PASS'))
+                self.assertEqual(cfg.read_text(),client)
+                self.assertEqual(cfg.with_suffix('.server.json').read_text(),server)
+
+    def test_paired_control_skips_non_data_failures_and_other_routes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session=pp.RemoteSession('192.0.2.10','root',22,Path(tmp)/'known',control_path=Path(tmp)/'ctl')
+            ex=pp.SSHStageExecutor(session,PORTS,RUNTIME,{},Path(tmp)/'private',diagnostic_run_id='a'*32,paired_control=True)
+            verifier=mock.Mock(last_route_i_probe={'url':pp.HTTP_PROBE_URL})
+            with mock.patch.object(ex,'route_i_process_info') as info:
+                for route,error in ((pp.Route.II,'CLIENT_CURL_EXIT_56=STOP'),(pp.Route.I,'ROUTE_I_CONFIG_PAIR_MISMATCH=STOP'),(pp.Route.I,'CLIENT_VERIFIER_PROCESS_EXIT=STOP'),(pp.Route.I,'STOP_ISOLATION_ROUTE_STILL_AVAILABLE=STOP')):
+                    ex.paired_failure_control(route,pp.BuilderStop(error),verifier)
+                info.assert_not_called()
+                self.assertFalse(ex.control_attempted)
+
+    def test_paired_mode_scope_and_agent_are_bounded(self):
+        args=pp.build_parser().parse_args(['--apply','--loopback-on-failure'])
+        with mock.patch.object(pp,'perform_target_inputs') as inputs,self.assertRaisesRegex(pp.BuilderStop,'SCOPE_INVALID'):
+            pp.run_deployment_after_gate(args)
+        inputs.assert_not_called()
+        with mock.patch('builtins.print'):
+            self.assertEqual(pp.main(['--preflight-only','--loopback-on-failure']),2)
+        compile(pp.SAVED_LOOPBACK_AGENT,'<paired-agent>','exec')
+        self.assertIn("[('client', client)] if live",pp.SAVED_LOOPBACK_AGENT)
+        self.assertIn("if not live and not result['loopback_http']['ok']",pp.SAVED_LOOPBACK_AGENT)
+        self.assertIn("result['server_identity_after'] != expected",pp.SAVED_LOOPBACK_AGENT)
+
+    def test_paired_cli_wires_saved_pair_without_control_on_success(self):
+        with tempfile.TemporaryDirectory() as tmp,mock.patch('builtins.print'):
+            root=Path(tmp); private=root/'private'/'lilfox-am'; source=private/'verify'/('a'*32)
+            server,client,_=self.config_pair_fixture()
+            pp.write_private(source/'verify-I-1-1.server.json',server)
+            pp.write_private(source/'verify-I-1-1.json',client)
+            pp.write_private(private/'runtime.json',json.dumps({'cover_hostname':RUNTIME.cover_hostname}))
+            pp.write_private(private/'known_hosts','synthetic pin')
+            identity=root/'identity'; pp.write_private(identity,'synthetic identity')
+            fp='SHA256:'+'A'*43; binding=pp.target_binding('192.0.2.10','root',22,fp)
+            state_path=root/'state'/'lilfox-am'/'state.json'
+            pp.save_state(state_path,pp.PersistentState(pp.BUILDER_VERSION,'a'*32,binding,(),PORTS,pp.AcceptanceLedger(),'I','server_only'))
+            session=pp.RemoteSession('192.0.2.10','root',22,private/'known_hosts')
+            context=pp.PreflightContext('lilfox-am','lilfox-am',session,pp.parse_inventory(GOOD),PORTS,private,state_path.parent,{},binding)
+            ex=FakeExecutor(); ex.paired_failure_control=mock.Mock()
+            ex.capture_diagnostics=lambda route: True
+            args=pp.build_parser().parse_args(['--apply','--server-only','--diagnostic-route-i','--loopback-on-failure','--saved-run-id','a'*32,'--profile-name','lilfox-am','--target-host','192.0.2.10','--ssh-user','root','--ssh-port','22','--identity-file',str(identity)])
+            with mock.patch.object(pp,'private_root',return_value=root/'private'),mock.patch.object(pp,'state_root',return_value=root/'state'),mock.patch.object(pp,'local_prerequisites',return_value={'ok':True}),mock.patch.object(pp.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='256 '+fp+' synthetic (ED25519)')),mock.patch.object(pp,'perform_target_inputs',return_value=('lilfox-am','lilfox-am','192.0.2.10',22,'root',fp,private/'known_hosts')),mock.patch.object(pp,'SSHControlMaster',return_value=nullcontext(session)),mock.patch.object(pp,'preflight_session',return_value=context),mock.patch.object(pp,'remote_cover_probe'),mock.patch.object(pp,'prepare_artifacts',return_value={}),mock.patch.object(pp,'SSHStageExecutor',return_value=ex) as factory,mock.patch.object(pp,'LocalClientVerifier',return_value=FakeVerifier()) as clients:
+                self.assertEqual(pp.run_deployment_after_gate(args),0)
+            self.assertTrue(factory.call_args.kwargs['paired_control'])
+            self.assertEqual(factory.call_args.kwargs['saved_route_i'],source)
+            self.assertEqual(clients.call_args.kwargs['route_i_template'],source/'verify-I-1-1.json')
+            ex.paired_failure_control.assert_not_called()
+            self.assertNotIn(('apply',pp.Route.II),ex.events)
+            self.assertNotIn(('apply',pp.Route.III),ex.events)
+            self.assertEqual(pp.load_state(state_path).accepted_routes,('I',))
+            self.assertEqual((source/'verify-I-1-1.server.json').read_text(),server)
+
+    def checkpoint_body(self, route):
+        return re.search(r"<<'__PP_CHECKPOINT__'\n(.*?)\n__PP_CHECKPOINT__", pp.owner_checkpoint_script("a" * 32, route), re.S).group(1)
+
+    def test_checkpoint_python_executes_idempotently_and_rejects_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); owner = root / "owner.json"; cfg = root / "config"
+            owner.write_text(json.dumps({"run_id": "a" * 32, "accepted": [], "config_sha256": {}}))
+            cfg.write_text("synthetic config\n")
+            body = self.checkpoint_body(pp.Route.I)
+            def invoke():
+                return subprocess.run([sys.executable, "-B", "-", str(owner), "a" * 32, "I", str(cfg)], input=body, text=True, capture_output=True, timeout=5)
+            self.assertEqual(invoke().returncode, 0)
+            first = owner.read_bytes()
+            self.assertEqual(invoke().returncode, 0)
+            self.assertEqual(owner.read_bytes(), first)
+            cfg.write_text("changed fixture\n")
+            self.assertEqual(invoke().returncode, 42)
+            self.assertEqual(owner.read_bytes(), first)
+
+    @staticmethod
+    def sandbox_shell(script, root):
+        # Generated scripts only see disposable paths and fake system commands.
+        for source, target in ((pp.REMOTE_ROOT, root / "remote"),
+                               ("/etc/privatpirat", root / "config"),
+                               ("/etc/systemd/system", root / "units"),
+                               ("/usr/local/lib/privatpirat", root / "binary")):
+            script = script.replace(source, str(target))
+        return script
+
+    def test_stage_prechecks_reject_existing_user_port_and_paths_before_writes(self):
+        for route in pp.Route:
+            for obstacle in ("user", "port", "ss_error", "unit", "config"):
+                with self.subTest(route=route, obstacle=obstacle), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp); remote = root / "remote"; remote.mkdir()
+                    (root / "units").mkdir(); (root / "config").mkdir(); (root / "binary").mkdir()
+                    (remote / "runtime.json").write_text('{}')
+                    (remote / pp.ARTIFACTS["xray-linux-amd64"].name).write_text('fixture')
+                    (remote / "owner.json").write_text(json.dumps({"run_id": "a" * 32, "accepted": [], "config_sha256": {}}))
+                    xray = root / "binary" / f"xray-{pp.XRAY_VERSION}" / "xray"
+                    if route is not pp.Route.I:
+                        xray.parent.mkdir(); xray.write_text('fixture'); xray.chmod(0o700)
+                    name = f"pp-lab-{route.value.lower()}"
+                    sentinel = root / ("units/" + name + ".service" if obstacle == "unit" else "config/" + name)
+                    if obstacle in ("unit", "config"):
+                        sentinel.write_text("foreign resource")
+                    script = {pp.Route.I: pp.stage_i_apply_script, pp.Route.II: pp.stage_ii_apply_script, pp.Route.III: pp.stage_iii_apply_script}[route](23451)
+                    stubs = f'''id() {{ if [ "$1" = -u ]; then printf 0; elif [ "{obstacle}" = user ] && [ "$1" = {name} ]; then return 0; else return 1; fi; }}
+ss() {{ if [ "{obstacle}" = ss_error ]; then return 1; elif [ "{obstacle}" = port ]; then printf 'LISTEN 0 0 0.0.0.0:23451\\n'; fi; }}
+systemctl() {{ return 0; }}
+sha256sum() {{ if [ "${{1:-}}" = -c ]; then cat >/dev/null; else printf 'fixturehash fixture\\n'; fi; }}
+install() {{ printf UNEXPECTED_WRITE; return 90; }}
+useradd() {{ printf UNEXPECTED_WRITE; return 90; }}
+userdel() {{ printf UNEXPECTED_DELETE; return 90; }}
+'''
+                    proc = subprocess.run(["bash", "-c", stubs + self.sandbox_shell(script, root)], capture_output=True, text=True, timeout=5)
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertNotIn("UNEXPECTED_", proc.stdout)
+                    self.assertFalse((remote / f"stage-{route.value}.owned").exists())
+                    if obstacle in ("unit", "config"):
+                        self.assertEqual(sentinel.read_text(), "foreign resource")
+
+    def test_rollback_requires_matching_receipt_and_never_deletes_unowned_config(self):
+        for receipt in (None, "b" * 32, "a" * 32):
+            with self.subTest(receipt=receipt), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); remote = root / "remote"; remote.mkdir()
+                (remote / "owner.json").write_text(json.dumps({"run_id": "a" * 32, "accepted": [], "config_sha256": {}}))
+                foreign = root / "config/pp-lab-i"; foreign.mkdir(parents=True)
+                (foreign / "sentinel").write_text("preserve")
+                if receipt:
+                    mark = remote / "stage-I.owned"; mark.mkdir(); (mark / "run-id").write_text(receipt)
+                script = self.sandbox_shell(pp.rollback_script(pp.Route.I, 23451), root)
+                stubs = 'id() { return 1; }; ss() { return 0; }; userdel() { printf UNEXPECTED_DELETE; return 1; }; systemctl() { return 0; };\n'
+                result = subprocess.run(["bash", "-c", stubs + script], text=True, capture_output=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("UNEXPECTED_DELETE", result.stdout)
+                self.assertEqual((foreign / "sentinel").read_text(), "preserve")
+
+    def test_real_stage_i_filesystem_transaction_and_user_creation_race(self):
+        import zipfile
+        for race in (False, True):
+            with self.subTest(user_creation_race=race), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); remote = root / "remote"; remote.mkdir()
+                (root / "units").mkdir()
+                sentinel = root / "unrelated"; sentinel.write_text("preserve")
+                (remote / "owner.json").write_text(json.dumps({"run_id": "a" * 32, "accepted": [], "config_sha256": {}}))
+                (remote / "runtime.json").write_text(json.dumps({"cover_hostname": "cover.example"}))
+                with zipfile.ZipFile(remote / pp.ARTIFACTS["xray-linux-amd64"].name, 'w') as z:
+                    z.writestr('xray', '#!/bin/sh\nif [ "$1" = x25519 ]; then printf "PrivateKey: ' + 'A' * 43 + '\\nPassword (PublicKey): ' + 'B' * 43 + '\\n"; fi\nexit 0\n')
+                stubs = f'''id() {{ if [ "$1" = -u ]; then printf 0; elif [ -f {str(root / 'user')!r} ]; then return 0; else return 1; fi; }}
+useradd() {{ : > {str(root / 'user')!r}; return {1 if race else 0}; }}
+userdel() {{ printf USER_DELETE; rm -f {str(root / 'user')!r}; }}
+chown() {{ return 0; }}
+openssl() {{ printf 'aabbccddeeff0011\\n'; }}
+sha256sum() {{ cat >/dev/null; return 0; }}
+systemctl() {{ case "$1" in enable) : > {str(root / 'active')!r};; disable) rm -f {str(root / 'active')!r};; is-active) test -f {str(root / 'active')!r};; *) return 0;; esac; }}
+ss() {{ if [ -f {str(root / 'active')!r} ]; then printf 'LISTEN 0 0 0.0.0.0:23451\\n'; fi; }}
+'''
+                stage = self.sandbox_shell(pp.stage_i_apply_script(23451), root)
+                result = subprocess.run(['bash', '-c', stubs + stage], text=True, capture_output=True, timeout=10)
+                if race:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertTrue((root / 'user').exists())
+                    self.assertNotIn('USER_DELETE', result.stdout)
+                    self.assertFalse((remote / 'stage-I.owned/user').exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    cfg = json.loads((root / 'config/pp-lab-i/config.json').read_text())
+                    self.assertEqual(cfg['inbounds'][0]['streamSettings']['network'], 'raw')
+                    self.assertEqual(stat.S_IMODE((root / 'config').stat().st_mode), 0o755)
+                    self.assertEqual(stat.S_IMODE((root / 'binary').stat().st_mode), 0o755)
+                    self.assertTrue((remote / 'stage-I.owned/user').exists())
+                    rollback = self.sandbox_shell(pp.rollback_script(pp.Route.I, 23451), root)
+                    result = subprocess.run(['bash', '-c', stubs + rollback], text=True, capture_output=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(remote.exists())
+                    self.assertFalse((root / 'config').exists())
+                    self.assertFalse((root / 'binary').exists())
+                    self.assertFalse((root / 'user').exists())
+                    self.assertFalse((root / 'active').exists())
+                self.assertEqual(sentinel.read_text(), 'preserve')
+
+    def test_owned_rollback_preserves_prior_config_and_clears_only_current_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); remote = root / "remote"; remote.mkdir()
+            prior = root / "config/pp-lab-i/config.json"; prior.parent.mkdir(parents=True); prior.write_text("prior fixture")
+            current = root / "config/pp-lab-ii"; current.mkdir(); (current / "config.json").write_text("current fixture")
+            owner = remote / "owner.json"
+            owner.write_text(json.dumps({"run_id": "a" * 32, "accepted": ["I"], "config_sha256": {"I": hashlib.sha256(prior.read_bytes()).hexdigest()}}))
+            mark = remote / "stage-II.owned"; mark.mkdir(); (mark / "run-id").write_text("a" * 32); (mark / "config").touch()
+            script = self.sandbox_shell(pp.rollback_script(pp.Route.II, 23452), root)
+            stubs = 'id() { return 1; }; ss() { return 0; }; systemctl() { return 0; }; userdel() { printf UNEXPECTED_DELETE; return 1; };\n'
+            proc = subprocess.run(["bash", "-c", stubs + script], text=True, capture_output=True, timeout=5)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(current.exists()); self.assertFalse(mark.exists())
+            self.assertEqual(prior.read_text(), "prior fixture")
+            self.assertEqual(json.loads(owner.read_text())["accepted"], ["I"])
+            self.assertNotIn("UNEXPECTED_DELETE", proc.stdout)
+
+    def test_rollback_regression_failure_marks_prior_route_failed_and_stops(self):
+        ex = FakeExecutor(fail=("health", pp.Route.II)); ver = FakeVerifier(fail_verify_calls=(5,))
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = pp.DeploymentEngine(ex, ver, Path(tmp) / "bundle", "192.0.2.10", PORTS, RUNTIME, "a" * 32, server_only=True)
+            engine.initialize(); engine.build_route(pp.Route.I, pp.NetworkClass.OPERATOR); engine.accept_server_stage(pp.Route.I)
+            with self.assertRaisesRegex(pp.BuilderStop, "ROLLBACK_REGRESSION_FAIL"):
+                engine.build_route(pp.Route.II, pp.NetworkClass.OPERATOR)
+            self.assertIn("I", engine.ledger.failed_routes)
+            self.assertFalse(engine.can_advance(pp.Route.I))
+            self.assertIn(("rollback", pp.Route.II), ex.events)
+            self.assertNotIn(("apply", pp.Route.III), ex.events)
+
+    def test_route_ii_low_port_receives_bind_capability(self):
+        self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE", pp.stage_ii_apply_script(443))
+        self.assertNotIn("AmbientCapabilities", pp.stage_ii_apply_script(8443))
+
+    def test_full_server_only_cli_uses_real_generated_checkpoints_and_reports_partial(self):
+        outer = self
+        with tempfile.TemporaryDirectory() as tmp, mock.patch('builtins.print') as printed:
+            root = Path(tmp); private = root / "private" / "fixture"; state_path = root / "state" / "fixture" / "state.json"
+            session = pp.RemoteSession("192.0.2.10", "root", 22, private / "known_hosts")
+            fp = "SHA256:" + "A" * 43; binding = pp.target_binding(session.host, session.user, session.port, fp)
+            context = pp.PreflightContext("fixture", "fixture", session, pp.parse_inventory(GOOD), PORTS, private, state_path.parent, {}, binding)
+            class Executor(FakeExecutor):
+                def initialize_owner(self, run_id):
+                    super().initialize_owner(run_id)
+                    self.run_id = run_id
+                    (root / "owner.json").write_text(json.dumps({"run_id": run_id, "accepted": [], "config_sha256": {}}))
+                def checkpoint(self, run_id, route):
+                    cfg = root / (route.value + '.config'); cfg.write_text('synthetic stage ' + route.value)
+                    code = outer.checkpoint_body(route)
+                    proc = subprocess.run([sys.executable, '-B', '-', str(root / 'owner.json'), run_id, route.value, str(cfg)], input=code, text=True, capture_output=True, timeout=5)
+                    outer.assertEqual(proc.returncode, 0, proc.stderr)
+                    super().checkpoint(run_id, route)
+            ex = Executor()
+            args = pp.build_parser().parse_args(['--apply', '--server-only', '--profile-name', 'fixture'])
+            with mock.patch.object(pp, 'private_root', return_value=root / 'private'), mock.patch.object(pp, 'state_root', return_value=root / 'state'), mock.patch.object(pp, 'local_prerequisites', return_value={'ok': True}), mock.patch.object(pp, 'perform_target_inputs', return_value=('fixture', 'fixture', session.host, 22, 'root', fp, private / 'known_hosts')), mock.patch.object(pp, 'SSHControlMaster', return_value=nullcontext(session)), mock.patch.object(pp, 'preflight_session', return_value=context), mock.patch.object(pp.getpass, 'getpass', return_value='cover.example'), mock.patch.object(pp, 'remote_cover_probe'), mock.patch.object(pp, 'prepare_artifacts', return_value={}), mock.patch.object(pp, 'SSHStageExecutor', return_value=ex), mock.patch.object(pp, 'LocalClientVerifier', return_value=FakeVerifier()):
+                self.assertEqual(pp.main(['--apply', '--server-only', '--profile-name', 'fixture']), 0)
+            self.assertEqual(json.loads((root / 'owner.json').read_text())['accepted'], ['I', 'II', 'III'])
+            self.assertEqual([route for op, route in ex.events if op == 'apply'], list(pp.Route))
+            self.assertEqual(pp.load_state(state_path).ledger.final_verdict(), pp.Verdict.PARTIAL)
+            self.assertTrue((private / 'client-bundle/manifest.json').exists())
+            messages = '\n'.join(str(c.args[0]) for c in printed.call_args_list)
+            self.assertIn('VERDICT=PARTIAL', messages)
+            self.assertIn('FORMAL_ACCEPTANCE=CLIENT_TEST_PENDING', messages)
 
     def test_render_check(self): self.assertEqual(pp.render_check(),0)
 
