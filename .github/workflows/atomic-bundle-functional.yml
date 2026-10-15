@@ -19,12 +19,12 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          fetch-depth: 3
+          fetch-depth: 0
       - name: Assert verified source commit
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^^)" = "ba4e0f0c2039aaa3715f9c7e4b5168ba1f770dcf"
+          git diff --quiet "ba4e0f0c2039aaa3715f9c7e4b5168ba1f770dcf" HEAD -- scripts tests web
       - name: Run functional tests
         shell: bash
         run: |
@@ -39,4 +39,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check HEAD^^ HEAD
+          git diff --check "ba4e0f0c2039aaa3715f9c7e4b5168ba1f770dcf" HEAD
