@@ -1,0 +1,41 @@
+name: Atomic Bundle functional verification
+
+on:
+  push:
+    branches:
+      - agent/verify-atomic-bundle-ci-2026-10-15
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-functional:
+    name: Python tests and render-check (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact verification branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Assert verified source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "ba4e0f0c2039aaa3715f9c7e4b5168ba1f770dcf"
+      - name: Run functional tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Run Builder render-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/pp-build.py --render-check
+      - name: Check whitespace and changed paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check HEAD^ HEAD
