@@ -1393,6 +1393,14 @@ ss() {{ if [ -f {str(root / 'active')!r} ]; then printf 'LISTEN 0 0 0.0.0.0:2345
         self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE", pp.stage_ii_apply_script(443))
         self.assertNotIn("AmbientCapabilities", pp.stage_ii_apply_script(8443))
 
+    def test_completed_hysteria_validation_forgets_pid_before_later_rollback(self):
+        script = pp.stage_iii_apply_script(23453)
+        completed = next(line for line in script.splitlines() if line.startswith('kill "$TEST_PID"'))
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = f'ROOT={tmp!r}; TEST_PID=4242; SEEN=1; kill() {{ return 0; }}; wait() {{ return 0; }};\n'
+            proc = subprocess.run(['bash', '-c', prefix + completed + '\n[ -z "${TEST_PID+x}" ]'], capture_output=True, text=True, timeout=5)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
     def test_full_server_only_cli_uses_real_generated_checkpoints_and_reports_partial(self):
         outer = self
         with tempfile.TemporaryDirectory() as tmp, mock.patch('builtins.print') as printed:

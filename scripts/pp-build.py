@@ -1468,7 +1468,7 @@ __PP_HY__
 unset AUTH; chown root:pp-lab-iii "$CFG" "$DIR/server.crt" "$DIR/server.key"; chmod 0640 "$CFG" "$DIR/server.crt" "$DIR/server.key"
 "$HY" server -c "$CFG" > "$ROOT/iii-validate.log" 2>&1 & TEST_PID=$!; SEEN=0
 for _ in $(seq 1 30); do if ss -H -lun | awk '{{print $4}}' | grep -Eq ':{port}$'; then SEEN=1; break; fi; kill -0 "$TEST_PID" >/dev/null 2>&1 || break; sleep .2; done
-kill "$TEST_PID" >/dev/null 2>&1 || true; wait "$TEST_PID" >/dev/null 2>&1 || true; [ "$SEEN" = 1 ]; rm -f "$ROOT/iii-validate.log"
+kill "$TEST_PID" >/dev/null 2>&1 || true; wait "$TEST_PID" >/dev/null 2>&1 || true; unset TEST_PID; [ "$SEEN" = 1 ]; rm -f "$ROOT/iii-validate.log"
 PIN="$(openssl x509 -in "$DIR/server.crt" -outform DER | sha256sum | awk '{{print $1}}')"; python3 - "$ROOT/iii.auth" "$PIN" "$MAT" <<'__PP_MAT__'
 import json,pathlib,sys
 authf,pin,matf=sys.argv[1:]; pathlib.Path(matf).write_text(json.dumps({{"route":"III","auth":pathlib.Path(authf).read_text().strip(),"pin_sha256":pin}})+"\\n")
