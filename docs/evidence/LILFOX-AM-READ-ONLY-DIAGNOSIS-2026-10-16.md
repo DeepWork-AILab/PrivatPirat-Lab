@@ -1,137 +1,145 @@
-# LilFox Amsterdam — ночная read-only диагностика
+# LilFox Amsterdam — read-only diagnosis и пакет восстановления
 
-- `FACT` — Evidence ID: `LILFOX-AM-READ-ONLY-2026-10-16`.
-- `FACT` — новые сетевые наблюдения: 2026-10-15 21:45 UTC, то есть 16 октября по Москве.
-- `FACT` — исходный `main`: `8b29c9cff517c0b114a4aee8f6f4745fa94411c3`.
-- `DECISION` — разрешены read-only проверки и публикация этого отчёта в отдельной ветке/Draft PR. Изменения инфраструктуры, DNS, подписок, SSH-доверия, deployment и merge запрещены.
-- `FACT` — текущий итог: `DIAGNOSIS=PARTIAL`, `SERVER_INSPECTION=BLOCKED`, `VPN_RESTORED=NOT_PROVEN`. Ни один маршрут не получает новый PASS.
+- `FACT` — Evidence ID: `LILFOX-AM-READ-ONLY-2026-10-16`; отчёт обновлён после подключения Desktop Commander.
+- `FACT` — основные сетевые и серверные наблюдения: 15 октября 2026, 21:45–22:14 UTC (16 октября, 00:45–01:14 МСК).
+- `FACT` — исходный main: `8b29c9cff517c0b114a4aee8f6f4745fa94411c3`.
+- `DECISION` — разрешены диагностика и этот документ в отдельной ветке/Draft PR. Изменения VPS/DNS/действующих подписок, SSH trust, deployment и merge не разрешены.
+- `FACT` — `VPN_RESTORED=NOT_PROVEN`. Есть свежий успешный Windows HTTPS data path I и II, но нет новой Android-матрицы, III client test или formal acceptance.
 
-## Источники и свежесть
+## Текущий диагноз
 
-| ID | Источник | Что подтверждает |
+| Слой | Статус | Подтверждённое наблюдение |
 |---|---|---|
-| S1 | [AGENTS.md](../../AGENTS.md), [SECURITY.md](../../SECURITY.md), [протокол](../EXPERIMENT_PROTOCOL.md), [README](../../README.md) на указанном main | Границы, публикация, критерии PASS |
-| S2 | Приватный `LILFOX_AM_FULL_HANDOFF_2026-10-06.md`, modified 2026-10-14 20:24:55 UTC, §§20.30–20.37 | Последнее сохранённое состояние Amsterdam; это историческое evidence, не текущая серверная проверка |
-| S3 | Предыдущая диагностика этой миссии, 15 октября около 21:05–21:07 UTC | DNS, ограничение облачного транспорта, ответы HTTP и TLS interception |
-| S4 | Новые DoH и ограниченные HTTPS-пробы, 15 октября 21:45 UTC | Текущее расхождение DNS и ответ фронта при явном выборе нового адреса |
-| S5 | Desktop Commander device inventory и проверка наличия облачных SSH prerequisites | Причина невозможности текущей SSH-диагностики |
-| S6 | [Генератор](../../scripts/lilfox-family-bundle.py), [существующие тесты](../../tests/test_lilfox_family_bundle.py) | Раздельные delivery origin и адрес назначения маршрутов |
+| DNS собственного delivery hostname | `FACT: FAIL` относительно текущего адреса | Google и Cloudflare DoH возвращают прежний адрес, TTL=300; AAAA нет |
+| Origins в шести Landing | `FACT: discrepancy` | Три metadata URL используют собственный hostname, три — legacy hostname, кодирующий прежний адрес; оба имени выбирают прежний адрес |
+| Caddy и origin TLS | `FACT: local checks PASS` | Оба hostname проходят настоящее chain/hostname verification с localhost VPS; root HTTP404 ожидаем |
+| Статические файлы | `FACT: local checks PASS` | Шесть Landing и шесть subscription: HTTP200, полные bodies совпадают с диском по SHA-256 |
+| Серверные профили | `FACT: checked fields match` | Шесть файлов × три маршрута: 18 текущих destinations; auth/transport/REALITY public keys и pin III согласованы |
+| I | `FACT: BASIC_HTTPS_EXIT=PASS` | Один точный текущий candidate, нативный Windows Xray: два независимых HTTPS200, оба exit-IP match |
+| II | `FACT: BASIC_HTTPS_EXIT=PASS` | Отдельный точный candidate, тот же изолированный метод: два HTTPS200, оба exit-IP match |
+| III | `TODO: client NOT_RUN` | Серверные config/auth/pin/listener/cert validity проверены; независимого UDP/QUIC-клиентского результата нет |
+| Внешний HTTPS delivery с ноутбука | `FACT: attempted requests failed` | Несмотря на успешный native TCP control, полноценные запросы к текущему адресу timeout; при наблюдаемом curl root request до delivery listener не дошёл ни один пакет |
+| Российские mobile/Wi-Fi и шесть Happ installs | `TODO: NOT_RUN` | Текущая среда ноутбука с TUN/прокси не заменяет независимый Android и прямую RF-сеть |
 
-`FACT` — более старый [публичный deployment checkpoint](LILFOX-AM-DEPLOYMENT-CHECKPOINT-2026-10-04.md) не заменяет поздний приватный handoff. Текущая задача возобновляет read-only диагностику; старые разрешения на установку или исправления не используются.
+`FACT` — минимальные подтверждённые дефекты доставки: stale A собственного домена и три ссылки metadata на legacy origin. Одной A-правки недостаточно для этих трёх страниц. Перезаписывать server subscriptions ради адреса не требуется: текущий readback подтверждает предыдущую правку всех 18 destinations.
 
-`DECISION` — операционные адреса, hostnames, ports, usernames, fingerprints, персональные URL, credentials, конфиги и raw logs здесь не публикуются. `OLD_ADDRESS`, `CURRENT_ADDRESS`, `DELIVERY_HOST`, `LEGACY_CERT_HOST` — роли из приватного incident inventory, а не значения для копирования в production. Приватные источники не публикуются ссылками.
+`FACT` — текущие I/II нельзя объявлять неработающими на сервере: прикладные HTTPS-запросы через них прошли. Это не устанавливает причину отказов на Android или в конкретном регионе. Оснований менять ключи, certificate pins, transport или перезапускать runtime по собранным данным нет.
 
-## Восстановленная архитектура
+## Источники и границы публикации
 
-`FACT` — по S2 Amsterdam — отдельный VPS, не Primary DeepWork и не PP-LAB-01. На одном сервере находятся три независимых runtime и доставка статических файлов.
-
-| Компонент | Архитектура по handoff | Последняя доступная проверка |
+| ID | Источник | Назначение |
 |---|---|---|
-| I | Отдельный Xray, VLESS RAW/TCP REALITY/Vision | Исторически проверены unit/listener/runtime и один персональный candidate; клиентский HTTPS не прошёл |
-| II | Отдельный Xray, VLESS XHTTP REALITY | Исторически active/listening; текущий data path не проверен |
-| III | Отдельный Hysteria2, TLS/QUIC/UDP, персональная авторизация и certificate pinning | Исторически active/listening; текущий data path и pin не проверены |
-| Delivery | Отдельный Caddy HTTPS, статические персональные Landing и subscription files | Сейчас получен ответ root при явном выборе CURRENT_ADDRESS через управляемый прокси |
-| Happ | Шесть получателей, у каждого subscription из I/II/III | Старый owner-reported результат 18/18 не подтверждает состояние после смены адреса |
+| S1 | [AGENTS.md](../../AGENTS.md), [SECURITY.md](../../SECURITY.md), [README](../../README.md), [протокол](../EXPERIMENT_PROTOCOL.md) на указанном main | Канон, разрешения, критерии evidence |
+| S2 | Приватный `LILFOX_AM_FULL_HANDOFF_2026-10-06.md`, modified 2026-10-14 20:24:55 UTC, §§20.30–20.37 | Последний handoff, исторические пробы и receipt адресной правки |
+| S3 | Два публичных DoH resolver и облачные HTTPS probes, 21:45 UTC | Текущий DNS и границы управляемого облачного proxy |
+| S4 | Desktop Commander → существующий WSL → прежний pinned SSH, 21:57–22:14 UTC | Текущее состояние именно Amsterdam |
+| S5 | Ограниченные Windows/WSL network probes и серверные observers | Текущий data path и локализация наблюдаемых отказов |
+| S6 | [Генератор](../../scripts/lilfox-family-bundle.py) и [тесты](../../tests/test_lilfox_family_bundle.py) | Независимость delivery origin и VPN destination |
 
-`FACT` — S6 использует `public_base` для Landing/subscription URL, а отдельный `host` — для адресов трёх VPN-профилей. HTML сохраняет ссылку subscription в metadata. Это разные контракты: исправление адресов внутри файлов не обновляет DNS, уже распространённые URL или импортированный профиль Happ.
+`FACT` — [ранний публичный deployment checkpoint](LILFOX-AM-DEPLOYMENT-CHECKPOINT-2026-10-04.md) старее S2/S4 и не подменяет их. Старые разрешения на установку/исправление не использовались.
 
-`FACT` — hostname типа LEGACY_CERT_HOST кодирует прежний адрес. Исправление записи собственного DELIVERY_HOST не перенаправит автоматически такие старые ссылки. Какие именно origins использованы в шести действующих ссылках, без приватного manifest сейчас неизвестно.
+`DECISION` — здесь нет рабочих IP/hostnames/ports, SNI, fingerprints, recipient identifiers, приватных URL, credentials, конфигов, raw logs или packet dumps. `OLD_ADDRESS`, `CURRENT_ADDRESS`, `DELIVERY_HOST`, `LEGACY_CERT_HOST` обозначают роли из приватного inventory. Ссылки на приватные источники не публикуются.
 
-## Новые доказательства
+## Архитектура и текущий сервер
 
-### DNS и HTTPS
+`FACT` — Amsterdam — отдельный сервер: I — отдельный Xray VLESS RAW/TCP REALITY/Vision; II — отдельный Xray VLESS XHTTP REALITY; III — Hysteria2 TLS/QUIC/UDP. Отдельный Caddy доставляет статические персональные Landing/subscription. Семь серверных identities включают владельца и шесть получателей; один VPS остаётся общим failure domain.
 
-`FACT` — по одному запросу A и AAAA на каждое из двух имён к Google Public DNS и Cloudflare DNS over HTTPS: восемь запросов, без перебора приватных путей.
+`FACT` — S6 строит delivery URL из `public_base`, а destination трёх профилей из отдельного `host`. HTML сохраняет subscription URL в metadata. DNS, распространённая source URL, HTML metadata, server subscription destination и уже импортированный Happ profile — разные состояния; изменение одного не обновляет остальные.
 
-| Проверка | Actual | Вывод |
-|---|---|---|
-| DELIVERY_HOST A, оба resolver | `matches_old=true`, `matches_current=false`, rcode=0, TTL=300 | Подтверждено текущее DNS-рассогласование |
-| DELIVERY_HOST AAAA, оба resolver | Пустой ответ, rcode=0 | IPv6 fallback в наблюдаемом DNS отсутствует |
-| LEGACY_CERT_HOST A, оба resolver | `matches_old=true`, `matches_current=false` | Старый origin всё ещё выбирает прежний адрес |
-| LEGACY_CERT_HOST AAAA, оба resolver | Пустой ответ, rcode=0 | IPv6 fallback отсутствует |
-| Обычный HTTPS root, оба hostname | curl exit=0, HTTP=502, CONNECT=200, body=150 bytes | Ошибка в наблюдаемом пути через облачный прокси; это не доказанный ответ VPS |
-| HTTPS root с явным CURRENT_ADDRESS, оба hostname | curl exit=0, HTTP=404, CONNECT=200, body=9 bytes | HTTP-фронт отвечает по управляемому проксированному пути к новому адресу |
+`FACT` — после запуска Desktop Commander прежняя блокировка снята. Найдены существующие WSL identity и target-specific known_hosts с permissions 0600; прежний alias содержит ровно одну ED25519 pin. SSH прошёл с `StrictHostKeyChecking=yes`, `UpdateHostKeys=no`, `BatchMode=yes`, explicit identity/known_hosts, отключёнными forwarding и global known_hosts. Использован ранее документированный HostKeyAlias после замены адреса. TOFU и обновление доверия не выполнялись.
 
-`FACT` — обычный и принудительный запросы сохраняли исходный hostname, SNI, HTTPS port и path `/`; различался только выбранный CONNECT destination. Использованы ограниченные connect/total timeouts, без redirect following и без отключения TLS verification. HTTP 502/404 не трактуется как успешная доставка из-за curl exit=0.
+`FACT` — проверена Ubuntu 24.04; все четыре units active/running, NRestarts=0. Ожидаемые TCP/UDP listeners принадлежат MainPID нужных units. После диагностики все четыре PID сохранились. Пути runtime config I/II/III совпадают с ожидаемыми, disk config не новее запуска процесса. Это не чтение runtime keys из памяти.
 
-`FACT` — один дополнительный различающий verbose check для DELIVERY_HOST: обычный путь показал заголовок `server: mitmproxy`; принудительный CONNECT действительно указывал CURRENT_ADDRESS и получил `server: Caddy`, HTTP/2 404.
+`FACT` — I/II JSON разобраны: по одному VLESS inbound и семь clients, ожидаемые transport/security/ports. III YAML разобран с проверкой duplicate keys: дублей нет, семь userpass entries, ожидаемый UDP listener. Свободное место превышает 1 GiB и 10%; дисковое переполнение не обнаружено.
 
-`FACT` — issuer предъявленного облачному curl сертификата — OpenAI, LLC / openai.com. Это TLS interception управляемого egress proxy. `ssl_verify_result=0` проверяет этот путь доверия, а не origin certificate VPS. Нельзя заключать, что действующий Caddy certificate корректен, действителен или соответствует персональным URL.
+`FACT` — все шесть subscriptions содержат по три профиля. Для 18 профилей destination совпадает с CURRENT_ADDRESS, прежний отсутствует. Для 12 VLESS profiles auth/flow/transport/SNI-membership/Short-ID-membership совпали; public keys вычислены из серверных private keys внутри VPS и сравнения true. Все шесть XHTTP paths совпадают с сервером. Для шести III auth и pin фактического certificate совпали. Значения не выводились.
 
-`FACT` — root 404 не проверяет tokenized Landing/subscription path. Статические персональные файлы по сети не запрашивались: актуальные приватные URL в облаке отсутствуют. Старый адрес не использовался для запросов с секретными путями/credentials.
+`FACT` — III certificate находится в пределах notBefore/notAfter. Caddy config успешно адаптируется, содержит ожидаемый static root и оба delivery hostnames. С localhost VPS HTTPS с нормальной CA/hostname validation прошёл для обоих имён; Caddy certificates действуют до января 2027. Это origin TLS evidence, независимое от облачной TLS interception.
 
-`FACT` — предыдущий контроль S3 показал ENETUNREACH для прямых TCP sockets как к target, так и к независимому control. Поэтому этот облачный runtime не заменяет прямой TCP/UDP VPN-клиент. Повторять серию тех же raw probes без изменения среды не стали. Доступность UDP/QUIC этими HTTPS-проверками не устанавливается.
+## Персональная доставка
 
-### Доступ к серверу
+`FACT` — на сервере ровно шесть Landing и шесть subscription files, symlinks не обнаружены. Все 12 точных путей проверены локально через Caddy с полноценным TLS. HTTP200, Content-Length и полный streaming SHA-256 совпали с диском. У subscriptions по три профиля, text/plain, ожидаемый profile-title и Cache-Control no-store; у Landing также no-store.
 
-`FACT` — Desktop Commander при начальной и контрольной проверке показывает единственное зарегистрированное устройство Offline, last seen около девяти часов назад. Сообщение владельца о включённом ноутбуке не означает, что агент Desktop Commander подключён.
+`FACT` — HTMLParser обнаружил ровно одну subscription meta в каждой странице. Три origin — DELIVERY_HOST, три — LEGACY_CERT_HOST; все шесть ссылок сопоставились с существующими subscription files. После исправления только собственного DNS половина Landing продолжит предлагать legacy source URL.
 
-`FACT` — в облаке отсутствуют documented Amsterdam private identity, прежний known_hosts и приватный target workspace; SSH agent не настроен, стандартные private identities отсутствуют. Доступ к существующему WSL через подключённый инструмент не появился.
+`FACT` — legacy hostname кодирует OLD_ADDRESS и по текущему DNS остаётся на нём. Правка другой A-записи его не перенаправит. Какие source URLs сохранены в шести телефонах, не проверено.
 
-`DECISION` — SSH не запускался. Новый ключ не принимался, known_hosts не менялся, новый канал управления не создавался. Это конкретный blocker серверного этапа. Ограничение не обходилось установкой ПО, браузерным терминалом, другим VPS или сменой management VPN.
+`FACT` — существующий локальный операторский пакет содержит только три уникальные Landing URL и три subscription URL, все на собственном домене; его нельзя выдавать за полную текущую шестёрку. Для проверки серверной шестёрки использованы фактические текущие filenames/metadata, без угадывания tokens. Чувствительные данные обрабатывались в памяти VPS/ноутбука, без передачи значений в чат или GitHub.
 
-## Что установлено и что не установлено
+`FACT` — первые bounded prefix reads не подтверждали целостность больших HTML: страницы существенно больше установленного prefix limit. Это ограничение harness, а не corruption. Один исправленный streaming hash check подтвердил полные bodies всех 12 файлов. Ошибка экранирования в первоначальном диагностическом regex metadata исправлена заменой на HTMLParser; его отрицательный результат не использован как серверная ошибка.
 
-| Класс | Статус | Минимальная причина / предел доказательства |
-|---|---|---|
-| DNS delivery | `FACT: FAIL` относительно CURRENT_ADDRESS | Два resolver направляют DELIVERY_HOST на OLD_ADDRESS после provider IP replacement |
-| Ссылки с LEGACY_CERT_HOST | `FACT: stale resolution`; фактическое использование всеми получателями неизвестно | Само имя продолжает разрешаться в OLD_ADDRESS; правки другого DNS-имени недостаточно |
-| Доставка всех шести персональных файлов | `TODO: NOT_RUN` | Нет приватного manifest и проверенного SSH; root 404 не заменяет шесть HTTP200 |
-| Старые destination внутри server subscriptions | `FACT: historical fix`, текущий readback отсутствует | S2 §20.31: APPLIED, files=6, candidate hashes confirmed, protected routes/Caddy unchanged; повторная массовая замена не обоснована |
-| I | `FACT: historical client failure`; причина `UNKNOWN` | S2 §§20.32–20.34: Android TLS/update errors и отдельный WSL curl exit35 после candidate config test; не доказана текущая серверная ошибка |
-| II и III | `TODO: NOT_RUN` для текущего состояния | Нет свежей клиентской пробы или серверной сверки |
-| Серверные units/listeners/config/certificates | `TODO: BLOCKED` | Текущий pinned SSH недоступен; исторический active не доказывает data path |
-| Ограничение российских сетей | `HYPOTHESIS` | Историческая региональная асимметрия совместима с фильтрацией, но текущего синхронного RF/control comparison нет |
+## DNS, внешний путь и проверка I/II
 
-`FACT` — исторический WSL observer не зарегистрировал target traffic во время одной failed probe. Более поздний Android observer считал общий трафик, включая исходящий; связь окна с фактической попыткой телефона не установлена. Эти записи не позволяют объявить блокировку конкретного оператора, всей подсети или неисправность REALITY. Новая серверная ошибка в этой миссии не подтверждена.
+`FACT` — по одному A/AAAA запросу к Google и Cloudflare для двух hostname: оба A выбирают OLD_ADDRESS; AAAA пусты, rcode=0. Для собственного hostname TTL=300. Это resolver evidence, не чтение DNS control plane или доказательство текущего владения OLD_ADDRESS.
 
-`HYPOTHESIS` — часть Happ-клиентов сохраняет прежний профиль, потому что refresh идёт к старому delivery origin. Это объясняет возможную связь delivery и stale client destination; без проверки exact source URL и импортированного профиля причинная связь не подтверждена. Даже исправная доставка не гарантирует работоспособность I/II/III.
+`FACT` — в облаке normal root HTTPS обоих hostname дал proxy HTTP502. Принудительный CONNECT на CURRENT_ADDRESS при сохранении Host/SNI дал Caddy HTTP404. Cloud curl увидел issuer OpenAI/openai.com: ssl_verify_result=0 там не проверяет origin certificate. Прямой облачный TCP недоступен также к независимому control; этот runtime не используется как raw VPN/UDP-клиент.
 
-## Change packet — только проект, НЕ разрешение на применение
+`FACT` — Windows native TCP probes открыли ожидаемые SSH/I/II/delivery endpoints; синхронный серверный observer увидел входящие SYN, включая SSH positive control. Этот тест не отправлял REALITY или HTTPS payload и не является PASS VPN/доставки.
 
-`DECISION` — ниже отдельные gates. Ни один из них не выполнялся. Только DNS имеет подтверждённый дефект; параметры будущего API-вызова должны быть получены агентом из разрешённого приватного inventory/control plane. Record IDs и свежий provider/DNS snapshot сейчас недоступны, поэтому исполняемый пакет ещё не готов. Для TLS и VPN точный mutation payload до диагностики придумывать нельзя.
+`FACT` — WSL HTTPS root при explicit CURRENT_ADDRESS для обоих Host/SNI timeout. Первая внешняя персональная HTTPS-проба в WSL остановлена на timeout. Windows Node с explicit CURRENT_ADDRESS, origin SNI и обязательной TLS verification также timeout до получения первого Landing. Перебора приватных путей и отключения проверки сертификата не было.
 
-### G0 — доступ и read-only preflight
+`FACT` — один различающий Windows curl root request с explicit CURRENT_ADDRESS: exit28, HTTP0, body0. За синхронное 35-second READY-окно серверный observer не увидел ни одного входящего/исходящего пакета delivery endpoint; одновременно наблюдал encrypted SSH payload. Отказ этой пробы произошёл до наблюдаемого target listener, а не вследствие выдачи Caddy ошибочного тела/сертификата. Точный upstream/local hop не установлен; отсутствие пакетов в одном окне не доказывает конкретного виновника.
 
-`TODO` — когда существующий Desktop Commander снова доступен, использовать уже установленный WSL/OpenSSH. Требования: `BatchMode=yes`, `StrictHostKeyChecking=yes`, `UpdateHostKeys=no`, explicit documented identity и прежний target-specific known_hosts. Если прежняя pin привязана к старому адресу, использовать только уже документированный HostKeyAlias; не переносить trust вручную и не принимать TOFU. Нет нужного файла/совпадения ключа — STOP этого направления.
+`FACT` — на Windows включён loopback system proxy, а выбранный IP route имеет tunnel-named interface. В проверенной выборке application-specific Windows Firewall rules для участвующих executables явных правил не найдено; это не исключает WFP/third-party policy. Из active Xray command line доступный disk-config не извлечён; фактические sniffing/routeOnly/rules не прочитаны. Нельзя объявлять причиной конкретный Happ setting или считать путь прямым RF-интернетом.
 
-`TODO` — один ограниченный read-only snapshot Amsterdam: unit active/substate/NRestarts и MainPID; владельцы ожидаемых TCP/UDP listeners; соответствие runtime/config path и build; время/свободное место; metadata сертификатов и локальная проверка hostname/chain/expiry; локальный Caddy request с правильным Host/SNI. Только структурированные counts/booleans/error classes, без raw config/journal/process environment. Не запускать конфиг как второй сервер, не сохранять dumps на VPS.
+`HYPOTHESIS` — source/application routing, tunnel interception, SNI destination override либо фильтрация внешнего пути могут объяснять различие empty TCP и full request. Участие российского оператора, entire-prefix block, MTU или дефект Caddy не установлены. Эти гипотезы не являются основанием менять production routing или протокол.
 
-`TODO` — из существующего приватного manifest точно сопоставить шесть получателей и шесть файлов; сверить hashes с последним receipt, по три профиля, суммарно 18 destinations, auth/transport/TLS соответствие серверу. Проверить отдельно Landing metadata URL, Happ source URL и route destination. Проверки ссылок — только после независимого подтверждения ownership destination и origin TLS; не отправлять secret paths старому адресу.
+`FACT` — отдельные нативные Windows Xray 26.7.28 I и II использовали точные текущие server subscriptions. Конфигурации переданы через stdin, config test exit0, SOCKS bound только loopback, sniffing тестового inbound выключен. Системный TUN/proxy/default route и рабочий client process не изменялись.
 
-### G1 — исправление единственной подтверждённой DNS-записи
+| Проба | UTC | HTTPS endpoint 1 | HTTPS endpoint 2 | Exit-IP match | Cleanup |
+|---|---|---|---|---|---|
+| I, один candidate | 22:10:45 | HTTP200, body>0 | HTTP200, body>0 | true для обоих | Собственный тестовый PID завершён, исходные Xray PID сохранены |
+| II, один candidate | 22:12:04 | HTTP200, body>0 | HTTP200, body>0 | true для обоих | Собственный тестовый PID завершён, исходные Xray PID сохранены |
 
-- `TODO` — цель: `DELIVERY_HOST / A / OLD_ADDRESS -> CURRENT_ADDRESS`, одна запись в существующей зоне. Не менять соседние записи, credentials, подписки, route runtimes, AAAA и TLS pins.
-- `TODO` — preflight: provider подтверждает CURRENT_ADDRESS этому Amsterdam; control-plane read даёт ровно одну ожидаемую A-запись и DNS-only режим. Resolver TTL=300 не заменяет чтение control-plane TTL. Неожиданное содержимое — STOP и пересмотр пакета.
-- `TODO` — точный будущий API shape: `PATCH /zones/{verified_zone_id}/dns_records/{verified_record_id}`, единственное поле payload `content=CURRENT_ADDRESS`. Сразу до PATCH повторить GET и сравнить type/name/content/ttl/proxied с backup; применять только при совпадении. Локальная compare-before-write не является атомарным CAS; при параллельном редактировании — STOP/согласовать окно.
-- `TODO` — backup: приватный root-only snapshot существующей записи с IDs/type/name/content/ttl/proxied и временем, плюс подтверждение владения обоими адресами. Без записи на VPS и без backup в Git. В readback удостовериться, что менялось только content.
-- `TODO` — Expected: authoritative/control-plane A и оба resolver выбирают CURRENT_ADDRESS; TTL и DNS-only режим сохранены. Персональная доставка — отдельный тест, не автоматический PASS.
-- `TODO` — PASS: control-plane readback точен; после истечения прежнего TTL плюс разумного времени распространения оба resolver согласны; затем независимый HTTPS с настоящей origin TLS validation и проверка точных шести путей.
-- `TODO` — rollback: восстановить content из snapshot ТОЛЬКО если прежний адрес всё ещё принадлежит владельцу и возврат безопасен. Provider replacement мог лишить владения OLD_ADDRESS; нельзя слепо откатывать на него. Если владение/безопасный rollback не подтверждены — gate закрыт до отдельного решения владельца.
-- `TODO` — риск: низкий для изолированной A-правки, но возврат на чужой адрес опасен; DNS cache delay ожидаем. Влияние ограничено клиентами, реально использующими DELIVERY_HOST. LEGACY_CERT_HOST и stale imported profiles этим не исправляются.
+`FACT` — использованы два независимых HTTPS exit services, нормальная TLS verification и SOCKS hostname resolution; в прикладном выводе только boolean IP match. Для I READY observer также зарегистрировал входящий трафик точного destination listener. Общие outgoing counters не используются: такой capture может включать TLS-cover egress. Observers ограничены timeout, завершились; raw packet contents не сохранялись и не публиковались.
 
-### G2 — origin TLS и delivery, только при найденном расхождении
+`FACT` — `BASIC_HTTPS_EXIT=PASS` относится к одному candidate каждого I/II в текущем контуре ноутбука, где management TUN/proxy оставался включён. Нет трёх reconnect repetitions, HTTP acceptance, прямого RF/mobile comparison или restart/isolation tests. Это не formal G2/G3, не 18/18 и не доказательство восстановления Happ. Независимый нативный III client в проверенном каталоге существующего Happ core не найден; установка запрещена, III client test не подменён старой WSL timeout-пробой.
 
-`TODO` — сначала без изменений проверить полный перечень используемых origins, Caddy routing/certificate binding, expiry и шесть HTTP200 responses через разрешённый независимый путь. Проверить тело Landing, metadata и по три корректных профиля в subscription; сравнения только внутри приватного процесса.
+## Минимальный change packet — НЕ ПРИМЕНЁН
 
-`TODO` — если найден mismatch, готовить ОДИН отдельный пакет для соответствующего слоя: certificate/hostname binding либо delivery-origin references. Существующие tokens/auth/pins сохранять; не регенерировать шесть bundles и не менять REALITY из-за TLS-ошибки доставки. Точный diff возможен только после G0. Backup: приватный snapshot только затрагиваемых файлов/metadata с hashes, permissions, ownership; rollback: восстановление только этих объектов с hash readback. Reload/restart, если потребуется, требует отдельного разрешения.
+`DECISION` — следующие gates независимы и требуют отдельного разрешения владельца. Секретные IDs/allowlists/hashes агент подставляет из разрешённого приватного inventory; владелец не должен переносить их вручную. DNS control-plane IDs/snapshot пока недоступны, поэтому исполняемый DNS-пакет ещё не готов. Новые серверные protocol changes не предлагаются.
 
-`TODO` — PASS: шесть exact Landing/subscription fetches с настоящим TLS, ненулевым ожидаемым body, правильным correspondence и 18 destination matches; затем фактический Happ refresh на клиенте. STOP: unexpected redirect/origin, key/pin drift, неоднозначный recipient mapping, чужие файлы, config validation FAIL или неподтверждённый rollback. Риск средний: ошибка затрагивает распространённые персональные ссылки.
+### G0 — обязательный preflight перед любой записью
 
-### G3 — изоляция route failure, без предполагаемого исправления
+- `TODO` — повторно проверить прежнюю SSH pin, target identity, текущий provider assignment и неизменность затрагиваемых объектов. Host-key mismatch/нет pin — STOP без TOFU.
+- `TODO` — получить DNS control-plane read: ровно одна ожидаемая A, record/zone IDs, TTL и DNS-only status. Resolver TTL не заменяет control-plane snapshot.
+- `TODO` — сохранить приватный allowlist трёх legacy-meta files с original hashes и одно-единственное разрешённое преобразование authority; отдельно hashes шести subscription files и route/Caddy configs как protected set.
+- `TODO` — предварительно проверить безопасный rollback. OLD_ADDRESS после provider replacement может больше не принадлежать владельцу. Snapshot не делает возврат на него безопасным. Если безопасного возврата нет — gate остаётся закрытым до отдельного согласованного recovery/roll-forward плана.
 
-`TODO` — после read-only сверки выбрать один точно идентифицированный профиль I. Через существующий независимый клиент выполнить одну ограниченную попытку и синхронно наблюдать только входящий трафик к нужному listener с известным source/time и положительным observer control; сверить счётчики с категоризированным journal. Общий счётчик всего трафика на том же номере порта не использовать. Не менять рабочий management VPN, TUN или default route.
+### G1 — одна DNS A-запись
 
-`TODO` — если packets не приходят, сравнить тот же candidate из независимой разрешённой non-RF сети; исследовать путь, а не менять keys. Если приходят и отклоняются, сверить exact client/server transport/auth/TLS параметры, затем составить отдельный минимальный diff по доказанной причине. При первом FAIL — не более одного различающего read-only теста и STOP этого направления.
+- `TODO` — цель: DELIVERY_HOST A, `OLD_ADDRESS -> CURRENT_ADDRESS`. Ни одной другой записи/параметра не менять.
+- `TODO` — будущий API shape: `PATCH /zones/{verified_zone_id}/dns_records/{verified_record_id}`, payload содержит только `content=CURRENT_ADDRESS`. Непосредственно перед PATCH повторить GET и сравнить original type/name/content/ttl/proxied с snapshot. Compare-before-write не атомарный CAS: при параллельном редактировании — STOP.
+- `TODO` — backup: приватный snapshot полной одной DNS-записи с временем, IDs и permissions 0600, вне Git/VPS public root. Provider assignment CURRENT_ADDRESS подтверждён до применения.
+- `TODO` — Expected: меняется только content; TTL/proxy status сохранены. Readback control plane точен, затем оба resolver после прежнего TTL/распространения выбирают CURRENT_ADDRESS.
+- `TODO` — rollback: вернуть original content только после подтверждения владения и безопасной выдачи на прежнем адресе; иначе gate закрыт по G0. Не откатывать вслепую.
+- `TODO` — PASS: точный DNS readback и два согласованных resolver. Отдельно проверить real HTTPS delivery; DNS PASS не равен restoration PASS.
+- `TODO` — риск низкий для изолированной записи, но прежний чужой адрес и stale caches создают риск неверного destination. Ошибка сверки, multiple/unexpected records или неподтверждённый rollback — STOP.
 
-`TODO` — II и III проверять раздельно тем же принципом; III требует настоящего UDP/QUIC-клиента, HTTPS proxy его не заменяет. VPN mutation packet сейчас отсутствует: причины не установлены. Риск предположительных замен credentials/REALITY/pins высок; такие изменения не предложены.
+### G2 — только три legacy metadata authority
 
-`TODO` — operational data-path evidence: для каждого выбранного маршрута DNS, HTTP/HTTPS через независимые endpoints, два exit-IP checks (`match=true`), три clean reconnect repetitions, независимые RF mobile/Wi-Fi наблюдения. Итоговая матрица шести подписок × три маршрута — 18 отдельных результатов. Restart/isolation acceptance по протоколу остаётся отдельным будущим gate: нынешний запрет рестартов действует, полного нового formal PASS до этого нет.
+- `TODO` — после DNS gate изменить в ровно трёх текущих Landing единственный subscription meta origin: LEGACY_CERT_HOST authority -> уже существующий DELIVERY_HOST authority. Сохранить HTTPS scheme, port, private path/token, query/fragment, body/assets и все auth/pins; остальные три Landing и шесть subscriptions не менять.
+- `TODO` — exact scope до apply: HTMLParser подтверждает 6/6 metadata, split 3+3; каждый source path — regular non-symlink file в ожидаемом root с original hash. Частная allowlist фиксируется до записи. Любое расхождение — STOP.
+- `TODO` — backup: только три исходных файла с hashes/permissions/ownership в отдельном приватном 0700 каталоге вне web root/Git; достаточное место и readback проверены.
+- `TODO` — publication: подготовить три candidates в приватном временном каталоге на той же FS вне web root; проверить единственную разрешённую замену, metadata/path и protected hashes. Публиковать каждый независимый recipient file атомарным file replace после повторной сверки original hash и сохранения mode/owner. Не удалять/заменять существующий public каталог, не запускать генератор поверх него, не оставлять temp files в web root. Общая трёхфайловая операция не является одной атомарной транзакцией; receipt учитывает каждый опубликованный файл.
+- `TODO` — Expected: 6/6 Landing metadata используют собственный origin; tokenized paths и 18 profiles неизменны. Static Caddy reload/restart не нужен и не разрешён.
+- `TODO` — rollback: восстановление только фактически затронутых файлов по receipt с hash readback и проверкой protected set. Восстановление legacy links допустимо лишь при безопасном destination; иначе gate закрыт по G0. Чужие файлы не удалять.
+- `TODO` — PASS: полные шесть Landing и шесть subscription fetches через новый DNS, настоящая origin TLS verification, правильный recipient correspondence, по три профиля, 18 current destinations, отсутствие изменения protected files. Затем фактический refresh Happ. Риск средний: меняется доставка трём получателям.
+- `TODO` — уже сохранённые в Happ legacy source URLs не обновятся от правки HTML. Нужны точная сверка source URL и безопасная повторная передача текущего приватного подключения; credentials не регенерировать автоматически.
 
-## Проверки отчёта и оставшиеся ограничения
+### G3 — остаточный внешний delivery path и клиентская приёмка
 
-- `FACT` — существующий `test_lilfox_family_bundle.py`: 26 tests PASS в облаке на текущем main. Это проверка генератора, не серверной доставки или VPN.
-- `FACT` — в ходе миссии нет записей/рестартов на VPS, DNS updates, изменений профилей или SSH trust; Primary DeepWork и PP-LAB-01 не использовались как targets/control hosts.
-- `TODO` — перед публикацией: staged/full-diff Gitleaks с полной редакцией, ручная проверка отсутствия operational values, GitHub secret-check CI; результаты в Draft PR.
-- `TODO` — не проверены текущие units/configs/certificates, exact шесть Landing/subscription paths, imported Happ profiles и I/II/III data path в нужных сетях.
-- `FACT` — ближайшее полезное действие: read-only G0 через прежний pinned SSH, когда уже существующий инструмент подключится. До этого серверная часть STOP; ночные ручные операции от владельца не запрашивались.
+`TODO` — до объявления восстановления различить текущий TUN/proxy path и прямую целевую сеть одним согласованным независимым клиентским тестом с source/time и ingress observer. Не отключать рабочий management VPN без отдельного разрешения. Сначала проверить фактические active routing/sniffing flags, если появится разрешённый доступ к ним; их значения не угадывать.
+
+`TODO` — если direct delivery при правильных DNS/origin всё ещё не достигает VPS, готовить отдельный пакет только по доказанному network/front-door дефекту. Сейчас нет основания переносить порты, устанавливать новый tunnel/VPN, менять firewall, сертификаты или REALITY. Риск таких предполагаемых изменений выше DNS/meta-правок; они не входят в этот пакет.
+
+`TODO` — III проверить существующим независимым UDP/QUIC-клиентом, когда такой контур доступен. Затем шесть Happ subscriptions × I/II/III, точная identity/source, DNS, HTTP/HTTPS, два exit-IP checks и три clean reconnects в целевых mobile/Wi-Fi сетях. Restart/isolation acceptance требует отдельного будущего разрешения; нынешний запрет действует. Без недостающих проверок verdict PARTIAL.
+
+## Безопасность, валидация и STOP
+
+- `FACT` — перед публикацией отчёта ранее прошли существующие 26 generator tests. Это не live VPN acceptance.
+- `FACT` — диагностические commands не записывали VPS configs/subscriptions/DNS/trust и не перезапускали units; после проб все четыре units сохранили PID/NRestarts. На Windows временные client configs были только в памяти, собственные процессы завершены, рабочие Xray PID сохранены. Новое ПО не устанавливалось.
+- `FACT` — Primary DeepWork и PP-LAB-01 не использовались как targets/control hosts; payment/deployment/merge отсутствуют.
+- `TODO` — результаты staged/full-diff Gitleaks, manual sanitization, GitHub readback и CI для этой редакции фиксируются в существующем Draft PR. Нельзя считать прежний CI проверкой нового commit.
+- `TODO` — не проверены Android/прямые RF-сети, реальные source URLs шести телефонов, III UDP data path и formal acceptance. Конкретная причина loss до delivery listener и доступ к DNS control plane остаются ограничениями.
+- `DECISION` — после этого read-only этапа любые изменения STOP до отдельного разрешения. Ближайший полезный шаг — завершить приватные DNS snapshot/rollback prerequisites и согласовать G1/G2, сохраняя отдельную проверку внешнего пути.
