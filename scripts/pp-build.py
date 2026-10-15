@@ -2,13 +2,13 @@
 """PrivatPirat Reproducible Node Builder v0.1.
 
 The explicitly authorized ``--apply`` path runs the staged I -> II -> III
-deployment engine. CODE-6 adds owner-approved operational metadata arguments,
-an explicit one-run TOFU option, and useful sanitized Builder STOP codes. Route
-rendering, deployment transactions, rollback and acceptance logic are unchanged.
+deployment engine. CODE-8 adds checked stage ownership and executable render checks.
+Formal Wi-Fi/mobile acceptance remains separate and cannot be inferred from it.
 """
 from __future__ import annotations
 
 import argparse
+import base64
 from contextlib import contextmanager
 import getpass
 import hashlib
@@ -34,9 +34,9 @@ import zipfile
 from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Mapping, Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 
-BUILDER_VERSION = "0.1.0-r3-code-6"
+BUILDER_VERSION = "0.1.0-r3-code-8"
 SUPPORTED_OS = ("ubuntu", "24.04", "x86_64")
 MIN_MEMORY_KIB = 512 * 1024
 MIN_ROOT_FREE_KIB = 1024 * 1024
@@ -50,7 +50,7 @@ HYSTERIA_INSTALL = f"/usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}/hyst
 # Independent transfer endpoints. Exit IP uses two more independent services.
 HTTP_PROBE_URL = "http://example.com/"
 HTTPS_PROBE_URL = "https://httpbin.org/get"
-EXIT_IP_URLS = ("https://api.ipify.org", "https://icanhazip.com")
+EXIT_IP_URLS = ("https://api4.ipify.org", "https://checkip.amazonaws.com")
 REQUIRED_NETWORKS = frozenset({"wifi", "mobile"})
 
 
@@ -102,6 +102,7 @@ class Route(str, Enum):
 class NetworkClass(str, Enum):
     WIFI = "wifi"
     MOBILE = "mobile"
+    OPERATOR = "operator"
 
 
 class Verdict(str, Enum):
@@ -202,6 +203,7 @@ class RemoteSession:
     known_hosts: Path
     control_path: Path | None = None
     use_sudo: bool = False
+    identity_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -271,7 +273,7 @@ class RouteMaterial:
             elif self.xhttp_path is not None:
                 raise BuilderStop("ROUTE_I_XHTTP_PATH_UNEXPECTED=STOP")
         else:
-            if not self.auth or not re.fullmatch(r"[0-9a-f]{32,128}", self.auth):
+            if not self.auth or not re.fullmatch(r"(?:[0-9a-f]{32,128}|[a-z][a-z0-9_-]{1,31}:[0-9a-f]{32,128})", self.auth):
                 raise BuilderStop("HYSTERIA_AUTH_INVALID=STOP")
             if not self.pin_sha256 or not re.fullmatch(r"[0-9a-fA-F]{64}", self.pin_sha256):
                 raise BuilderStop("HYSTERIA_PIN_INVALID=STOP")
@@ -312,6 +314,15 @@ class AcceptanceLedger:
                 return Verdict.PARTIAL
         return Verdict.PASS
 
+    def server_stage_pass(self, route: Route) -> bool:
+        if route.value in self.failed_routes:
+            return False
+        if not ({NetworkClass.OPERATOR.value} <= self.data_path[route.value]
+                and self.restart[route.value] and self.isolation[route.value]):
+            return False
+        return all(NetworkClass.OPERATOR.value in self.regression.get(f"{route.value}>{prior.value}", set())
+                   for prior in {Route.I: (), Route.II: (Route.I,), Route.III: (Route.I, Route.II)}[route])
+
     def final_verdict(self) -> Verdict:
         values = [self.route_verdict(route) for route in Route]
         if Verdict.FAIL in values:
@@ -334,13 +345,13 @@ class AcceptanceLedger:
         if not self.failed_routes.issubset(allowed_routes):
             raise BuilderStop("RESUME_LEDGER_INVALID=STOP")
         for networks in self.data_path.values():
-            if not set(networks).issubset(REQUIRED_NETWORKS):
+            if not set(networks).issubset(REQUIRED_NETWORKS | {NetworkClass.OPERATOR.value}):
                 raise BuilderStop("RESUME_LEDGER_INVALID=STOP")
         allowed_regressions = {"II>I", "III>I", "III>II"}
         if set(self.regression) - allowed_regressions:
             raise BuilderStop("RESUME_LEDGER_INVALID=STOP")
         for networks in self.regression.values():
-            if not set(networks).issubset(REQUIRED_NETWORKS):
+            if not set(networks).issubset(REQUIRED_NETWORKS | {NetworkClass.OPERATOR.value}):
                 raise BuilderStop("RESUME_LEDGER_INVALID=STOP")
 
     def to_jsonable(self) -> dict[str, object]:
@@ -375,6 +386,7 @@ class PersistentState:
     ports: Ports
     ledger: AcceptanceLedger
     last_failed_route: str | None = None
+    acceptance_mode: str = "formal"
 
     def pending_route(self) -> Route | None:
         if self.accepted_routes == ("I", "II", "III"):
@@ -398,6 +410,7 @@ class PersistentState:
             "ports": asdict(self.ports),
             "ledger": self.ledger.to_jsonable(),
             "last_failed_route": self.last_failed_route,
+            "acceptance_mode": self.acceptance_mode,
         }
 
     @classmethod
@@ -415,6 +428,7 @@ class PersistentState:
                 ports=Ports(int(ports_raw["route_i_tcp"]), int(ports_raw["route_ii_tcp"]), int(ports_raw["route_iii_udp"])),
                 ledger=AcceptanceLedger.from_mapping(dict(values.get("ledger", {}))),
                 last_failed_route=None if values.get("last_failed_route") is None else str(values["last_failed_route"]),
+                acceptance_mode=str(values.get("acceptance_mode", "formal")),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise BuilderStop("RESUME_STATE_INVALID=STOP") from exc
@@ -425,11 +439,16 @@ class PersistentState:
         if not re.fullmatch(r"[0-9a-f]{64}", state.target_binding):
             raise BuilderStop("RESUME_TARGET_BINDING_INVALID=STOP")
         port_values = tuple(asdict(state.ports).values())
-        if len(set(port_values)) != 3 or any(not 1 <= int(port) <= 65535 for port in port_values):
+        if state.ports.route_i_tcp == state.ports.route_ii_tcp or any(not 1 <= int(port) <= 65535 for port in port_values):
             raise BuilderStop("RESUME_PORTS_INVALID=STOP")
+        if state.acceptance_mode not in ("formal", "server_only"):
+            raise BuilderStop("RESUME_ACCEPTANCE_MODE_INVALID=STOP")
         state.ledger.validate()
         for route_value in state.accepted_routes:
-            if state.ledger.route_verdict(Route(route_value)) is not Verdict.PASS:
+            route = Route(route_value)
+            passed = (state.ledger.route_verdict(route) is Verdict.PASS if state.acceptance_mode == "formal"
+                      else state.ledger.server_stage_pass(route))
+            if not passed:
                 raise BuilderStop("RESUME_ACCEPTED_ROUTE_NOT_PASS=STOP")
         return state
 
@@ -477,8 +496,8 @@ print(ipaddress.ip_address(value))
 __PP_EGRESS_PY__
 }
 if command -v python3 >/dev/null 2>&1; then
-  printf 'EGRESS_A=%s\n' "$(egress https://api.ipify.org)"
-  printf 'EGRESS_B=%s\n' "$(egress https://icanhazip.com)"
+  printf 'EGRESS_A=%s\n' "$(egress https://api4.ipify.org)"
+  printf 'EGRESS_B=%s\n' "$(egress https://checkip.amazonaws.com)"
 else
   printf 'EGRESS_A=\nEGRESS_B=\n'
 fi
@@ -649,7 +668,26 @@ def assert_inventory(inv: Inventory, *, require_clean: bool = True) -> dict[str,
     return result
 
 
-def select_ports(inv: Inventory) -> Ports:
+def parse_requested_ports(value: str | None) -> Ports | None:
+    if value is None:
+        return None
+    parts = value.split(",")
+    if len(parts) != 3 or any(not re.fullmatch(r"[0-9]{1,5}", part) for part in parts):
+        raise BuilderStop("REQUESTED_PORTS_INVALID=STOP")
+    numbers = [int(part) for part in parts]
+    if any(not 1 <= port <= 65535 for port in numbers) or numbers[0] == numbers[1]:
+        raise BuilderStop("REQUESTED_PORTS_INVALID=STOP")
+    return Ports(*numbers)
+
+
+def select_ports(inv: Inventory, requested: Ports | None = None) -> Ports:
+    if requested is not None:
+        if (requested.route_i_tcp == requested.route_ii_tcp
+                or requested.route_i_tcp in inv.listen_tcp
+                or requested.route_ii_tcp in inv.listen_tcp
+                or requested.route_iii_udp in inv.listen_udp):
+            raise BuilderStop("REQUESTED_PORT_OCCUPIED=STOP")
+        return requested
     used = set(inv.listen_tcp) | set(inv.listen_udp)
     chosen: list[int] = []
     for _ in range(1000):
@@ -770,11 +808,14 @@ def _ssh_common(session: RemoteSession, *, multiplex: bool) -> list[str]:
         "-o", "StrictHostKeyChecking=yes",
         "-o", f"UserKnownHostsFile={session.known_hosts}",
         "-o", "LogLevel=ERROR",
+        "-o", "BatchMode=yes",
     ]
+    if session.identity_file is not None:
+        opts += ["-i", str(session.identity_file), "-o", "IdentitiesOnly=yes"]
     if multiplex:
         if session.control_path is None:
             raise BuilderStop("SSH_CONTROLMASTER_REQUIRED=STOP")
-        opts += ["-S", str(session.control_path), "-o", "ControlMaster=no", "-o", "BatchMode=yes"]
+        opts += ["-S", str(session.control_path), "-o", "ControlMaster=no"]
     return opts
 
 
@@ -856,8 +897,10 @@ class SSHControlMaster:
             "-o", f"UserKnownHostsFile={self.original.known_hosts}",
             "-o", "ControlPersist=no",
             "-o", "LogLevel=ERROR",
-            f"{validate_user(self.original.user)}@{validate_host(self.original.host)}",
         ]
+        if self.original.identity_file is not None:
+            cmd += ["-i", str(self.original.identity_file), "-o", "IdentitiesOnly=yes"]
+        cmd.append(f"{validate_user(self.original.user)}@{validate_host(self.original.host)}")
         try:
             proc = subprocess.run(cmd, timeout=60)
         except subprocess.TimeoutExpired as exc:
@@ -1067,6 +1110,67 @@ def render_xray_client_config(route: Route, host: str, port: int, material: Rout
     return json.dumps(cfg, indent=2, sort_keys=True) + "\n"
 
 
+def require_route_i_crypto() -> None:
+    try:
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        X25519PrivateKey.from_private_bytes(bytes(32)).public_key()
+    except (ImportError, OSError, ValueError) as exc:
+        raise BuilderStop("ROUTE_I_CRYPTO_UNAVAILABLE=STOP") from exc
+
+
+def compare_route_i_configs(server_text: str, client_text: str, host: str, port: int) -> dict[str, str]:
+    """Compare actual files; return fixed labels only, never config values."""
+    result = dict.fromkeys(("DESTINATION", "UUID", "FLOW", "SNI", "SHORT_ID", "PUBLIC_KEY"), "MISMATCH")
+    try:
+        server, client = json.loads(server_text), json.loads(client_text)
+        inbound, = server["inbounds"]
+        outbound, = [entry for entry in client["outbounds"] if entry["protocol"] == "vless"]
+        peer, = outbound["settings"]["vnext"]
+        server_user, = inbound["settings"]["clients"]
+        client_user, = peer["users"]
+        ss, cs = inbound["streamSettings"], outbound["streamSettings"]
+        if inbound["protocol"] != "vless" or any(
+            stream["network"] != "raw" or stream["security"] != "reality" for stream in (ss, cs)
+        ):
+            return result
+        sr, cr = ss["realitySettings"], cs["realitySettings"]
+        destination = (peer["address"] == host and peer["port"] == port == inbound["port"]
+                       and inbound["listen"] in ("0.0.0.0", host))
+        server_id, client_id = server_user["id"], client_user["id"]
+        ids = (isinstance(server_id, str) and isinstance(client_id, str)
+               and str(uuid.UUID(server_id)) == server_id
+               and secrets.compare_digest(server_id, client_id))
+        flow = server_user.get("flow") == client_user.get("flow") == "xtls-rprx-vision"
+        sni = validate_cover_hostname(cr["serverName"])
+        names = sr["serverNames"]
+        sni_match = isinstance(names, list) and sni in names and sr["target"] == sni + ":443"
+        sid = cr["shortId"]
+        short_ids = sr["shortIds"]
+        sid_match = (isinstance(sid, str) and re.fullmatch(r"[0-9a-f]{16}", sid) is not None
+                     and isinstance(short_ids, list) and sid in short_ids)
+        for field, matched in (("DESTINATION", destination), ("UUID", ids), ("FLOW", flow),
+                               ("SNI", sni_match), ("SHORT_ID", sid_match)):
+            result[field] = "MATCH" if matched else "MISMATCH"
+    except (ValueError, TypeError, KeyError, AttributeError, BuilderStop):
+        return result
+    require_route_i_crypto()
+    try:
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        private = sr["privateKey"]
+        if not isinstance(private, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", private):
+            return result
+        raw = base64.b64decode(private + "=", altchars=b"-_", validate=True)
+        public = X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        derived = base64.urlsafe_b64encode(public).decode("ascii").rstrip("=")
+        supplied = cr["password"]
+        if isinstance(supplied, str) and secrets.compare_digest(derived, supplied):
+            result["PUBLIC_KEY"] = "MATCH"
+    except (ValueError, TypeError, KeyError):
+        pass
+    return result
+
+
 def render_hysteria_server_config(port: int, auth: str, cert: str, key: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{32,128}", auth):
         raise BuilderStop("HYSTERIA_AUTH_INVALID=STOP")
@@ -1085,8 +1189,8 @@ def render_hysteria_client_config(host: str, port: int, material: RouteMaterial,
     )
 
 
-def render_share_uri(route: Route, host: str, port: int, material: RouteMaterial, cover_hostname: str, profile_name: str) -> str:
-    label = urllib.parse.quote(f"{profile_name}-{route.value}", safe="")
+def render_share_uri(route: Route, host: str, port: int, material: RouteMaterial, cover_hostname: str, profile_name: str, *, label_override: str | None = None) -> str:
+    label = urllib.parse.quote(label_override if label_override is not None else f"{profile_name}-{route.value}", safe="")
     authority = _authority(host, port)
     if route in {Route.I, Route.II}:
         material.validate()
@@ -1106,7 +1210,8 @@ def render_share_uri(route: Route, host: str, port: int, material: RouteMaterial
     return f"hysteria2://{urllib.parse.quote(material.auth or '', safe='')}@{authority}/?{query}#{label}"
 
 
-def _systemd_unit(user: str, exec_start: str) -> str:
+def _systemd_unit(user: str, exec_start: str, *, privileged_port: bool = False) -> str:
+    bind_capability = "AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n" if privileged_port else ""
     return f"""[Unit]
 Description=PrivatPirat {user}
 After=network-online.target
@@ -1119,7 +1224,7 @@ Group={user}
 ExecStart={exec_start}
 Restart=on-failure
 RestartSec=2s
-NoNewPrivileges=yes
+{bind_capability}NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
@@ -1133,15 +1238,133 @@ WantedBy=multi-user.target
 """
 
 
-def stage_i_apply_script(port: int) -> str:
+def _stage_paths(route: Route) -> tuple[str, str, str | None]:
+    name = f"pp-lab-{route.value.lower()}"
+    binary = (f"/usr/local/lib/privatpirat/xray-{XRAY_VERSION}" if route is Route.I else
+              f"/usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}" if route is Route.III else None)
+    return name, f"/etc/privatpirat/{name}", binary
+
+
+def _stage_cleanup_script(route: Route, port: int | None) -> str:
+    """Cleanup only resources acquired by this stage of the recorded run.
+
+    A missing/foreign receipt is a STOP, never permission to delete by name.
+    Receipts survive in-shell cleanup so the controller can verify it again.
+    """
+    name, directory, binary = _stage_paths(route)
+    flag = "-ltn" if route in {Route.I, Route.II} else "-lun"
+    scratch = {Route.I: ("i.uuid", "i.keys", "i.sid", "i.journal_since"),
+               Route.II: ("ii.uuid", "ii.keys", "ii.sid", "ii.path"),
+               Route.III: ("iii.auth", "iii-validate.log")}[route]
+    scratch_paths = " ".join(f'"$ROOT/{path}"' for path in scratch)
+    listener = ""
+    if port is not None:
+        if not 1 <= int(port) <= 65535:
+            raise ValueError("invalid port")
+        listener = f'''LISTEN="$(ss -H {flag})" || return 1
+if printf '%s\\n' "$LISTEN" | awk '{{print $4}}' | grep -Eq ':{int(port)}$'; then return 1; fi'''
+    binary_cleanup = (f'''if [ -f "$MARK/binary" ]; then rm -rf -- {binary!r} || return 1; rm -f "$MARK/binary" || return 1; fi''' if binary else "")
+    return f'''ROOT={REMOTE_ROOT!r}; MARK="$ROOT/stage-{route.value}.owned"; UNIT={name + '.service'!r}
+stage_owner() {{
+python3 - "$ROOT/owner.json" "$MARK/run-id" "$1" <<'__PP_STAGE_OWNER__'
+import hashlib,json,os,pathlib,re,sys,tempfile
+p,receipt,mode=pathlib.Path(sys.argv[1]),pathlib.Path(sys.argv[2]),sys.argv[3]
+if p.is_symlink() or receipt.is_symlink(): raise SystemExit(60)
+d=json.loads(p.read_text()); run=receipt.read_text().strip()
+if not re.fullmatch('[0-9a-f]{{32}}',run) or d.get('run_id')!=run: raise SystemExit(60)
+route={route.value!r}; prefix={{'I':[],'II':['I'],'III':['I','II']}}[route]
+accepted=d.get('accepted',[])
+if accepted not in (prefix,prefix+[route]): raise SystemExit(61)
+for prior in prefix:
+ cfg=pathlib.Path('/etc/privatpirat/pp-lab-'+prior.lower()+'/config.json')
+ if hashlib.sha256(cfg.read_bytes()).hexdigest()!=d.get('config_sha256',{{}}).get(prior): raise SystemExit(62)
+if mode=='rollback' and accepted==prefix+[route]:
+ d['accepted']=prefix; d.get('config_sha256',{{}}).pop(route,None)
+ fd,tmp=tempfile.mkstemp(dir=str(p.parent),prefix='.owner-')
+ with os.fdopen(fd,'w') as f: json.dump(d,f); f.write('\\n'); f.flush(); os.fsync(f.fileno())
+ os.chmod(tmp,0o600); os.replace(tmp,p)
+__PP_STAGE_OWNER__
+}}
+rollback_current() {{
+ [ -d "$MARK" ] && [ ! -L "$MARK" ] || return 1
+ stage_owner verify || return 1
+ if [ -n "${{TEST_PID:-}}" ]; then kill "$TEST_PID" >/dev/null 2>&1 || true; wait "$TEST_PID" 2>/dev/null || true; unset TEST_PID; fi
+ if [ -f "$MARK/unit" ]; then
+  systemctl disable --now "$UNIT" >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/{name}.service || return 1; systemctl daemon-reload || return 1
+  rm -f "$MARK/unit" || return 1
+ fi
+ if [ -f "$MARK/config" ]; then rm -rf -- {directory!r} || return 1; rm -f "$MARK/config" || return 1; fi
+ if [ -f "$MARK/user" ]; then userdel {name} || return 1; rm -f "$MARK/user" || return 1; fi
+ {binary_cleanup}
+ rm -f "$ROOT/material-{route.value}.json" {scratch_paths} || return 1
+ if [ -f "$MARK/config-parent" ]; then rmdir /etc/privatpirat 2>/dev/null || true; rm -f "$MARK/config-parent"; fi
+ if [ -f "$MARK/binary-parent" ]; then rmdir /usr/local/lib/privatpirat 2>/dev/null || true; rm -f "$MARK/binary-parent"; fi
+ if id {name} >/dev/null 2>&1; then return 1; fi
+ if [ -e {directory!r} ] || [ -L {directory!r} ] || [ -e /etc/systemd/system/{name}.service ] || [ -L /etc/systemd/system/{name}.service ]; then return 1; fi
+ {listener}
+ stage_owner rollback || return 1
+}}
+'''
+
+
+def _transactional_stage(script: str, route: Route, port: int) -> str:
+    """Add fail-closed acquisition and persistent, resource-specific receipts."""
+    name, directory, binary = _stage_paths(route)
+    def replace_once(old: str, new: str) -> None:
+        nonlocal script
+        if script.count(old) != 1:
+            raise BuilderStop("STAGE_TEMPLATE_INVALID=STOP")
+        script = script.replace(old, new, 1)
+    replace_once(f"! id {name} >/dev/null 2>&1", f"if id {name} >/dev/null 2>&1; then exit 30; fi")
+    flag = "-ltn" if route in {Route.I, Route.II} else "-lun"
+    negative_listener = f"! ss -H {flag} | awk '{{print $4}}' | grep -Eq ':{port}$'"
+    if script.count(negative_listener) != 1:
+        raise BuilderStop("STAGE_TEMPLATE_PRECHECK_INVALID=STOP")
+    script = script.replace(negative_listener, f'''LISTEN="$(ss -H {flag})"; if printf '%s\\n' "$LISTEN" | awk '{{print $4}}' | grep -Eq ':{port}$'; then exit 31; fi''')
+    first_write = (f"install -d -m 0755 {binary}" if binary else "useradd --system")
+    start = script.index(first_write)
+    paths = [directory, f"/etc/systemd/system/{name}.service", f"{REMOTE_ROOT}/material-{route.value}.json"]
+    if binary:
+        paths.append(binary)
+    checks = "\n".join(f"if [ -e {p!r} ] || [ -L {p!r} ]; then exit 33; fi" for p in paths)
+    begin = _stage_cleanup_script(route, port) + f'''{checks}
+if [ -e "$MARK" ] || [ -L "$MARK" ]; then exit 33; fi
+RUN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$ROOT/owner.json")"
+[[ "$RUN_ID" =~ ^[0-9a-f]{{32}}$ ]]
+umask 077; mkdir -m 0700 "$MARK"; printf '%s\\n' "$RUN_ID" > "$MARK/run-id"
+stage_owner verify
+trap 'rc=$?; trap - ERR HUP INT TERM; rollback_current || true; exit "$rc"' ERR
+trap 'trap - ERR HUP INT TERM; rollback_current || true; exit 130' HUP INT TERM
+'''
+    script = script[:start] + begin + script[start:]
+    if binary:
+        replace_once(f"install -d -m 0755 {binary}", f'''if [ ! -e /usr/local/lib/privatpirat ]; then mkdir -m 0755 /usr/local/lib/privatpirat; : > "$MARK/binary-parent"; fi
+mkdir -- {binary!r}; : > "$MARK/binary"; chmod 0755 {binary!r}''')
+    useradd = f"useradd --system --user-group --home /nonexistent --shell /usr/sbin/nologin {name}"
+    replace_once(useradd, useradd + '; : > "$MARK/user"')
+    config_install = f"install -d -m 0750 -o root -g {name} " + ('"$DIR"' if route is Route.III else directory)
+    replace_once(config_install, f'''if [ ! -e /etc/privatpirat ]; then mkdir -m 0755 /etc/privatpirat; : > "$MARK/config-parent"; fi
+mkdir -- {directory!r}; : > "$MARK/config"; chown root:{name} {directory!r}; chmod 0750 {directory!r}''')
+    unit_write = f"cat > /etc/systemd/system/{name}.service <<'__PP_UNIT__'"
+    replace_once(unit_write, f'''(set -o noclobber; : > /etc/systemd/system/{name}.service)
+: > "$MARK/unit"
+{unit_write}''')
+    return script
+
+
+def stage_i_apply_script(port: int, *, diagnostic: bool = False, saved_pair: bool = False) -> str:
+    if saved_pair and not diagnostic:
+        raise BuilderStop('SAVED_PAIR_REQUIRES_DIAGNOSTIC=STOP')
     archive = ARTIFACTS["xray-linux-amd64"]
-    unit = _systemd_unit("pp-lab-i", f"{XRAY_INSTALL} run -config /etc/privatpirat/pp-lab-i/config.json")
-    return f'''set -euo pipefail
+    loglevel = "info" if diagnostic else "warning"
+    diagnostic_stamp = 'date --iso-8601=seconds > "$ROOT/i.journal_since"' if diagnostic else ""
+    unit = _systemd_unit("pp-lab-i", f"{XRAY_INSTALL} run -config /etc/privatpirat/pp-lab-i/config.json", privileged_port=port < 1024)
+    script = f'''set -euo pipefail
 ROOT={REMOTE_ROOT!r}; CFG=/etc/privatpirat/pp-lab-i/config.json; MAT="$ROOT/material-I.json"; XRAY={XRAY_INSTALL!r}
-rollback() {{ systemctl disable --now pp-lab-i.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-i.service; rm -rf /etc/privatpirat/pp-lab-i; userdel pp-lab-i >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/xray-{XRAY_VERSION}; rm -f "$MAT"; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true; }}
-trap 'rollback' ERR HUP INT TERM
 [ "$(id -u)" = 0 ]; [ -f "$ROOT/{archive.name}" ] && [ -f "$ROOT/runtime.json" ]; ! id pp-lab-i >/dev/null 2>&1
 ! ss -H -ltn | awk '{{print $4}}' | grep -Eq ':{port}$'
+printf 'STAGE_I_STEP=ARCHIVE\n'
 printf '%s  %s\n' {archive.sha256!r} "$ROOT/{archive.name}" | sha256sum -c - >/dev/null
 install -d -m 0755 /usr/local/lib/privatpirat/xray-{XRAY_VERSION}
 python3 - "$ROOT/{archive.name}" "$XRAY" <<'__PP_EXTRACT__'
@@ -1157,20 +1380,25 @@ os.chmod(tmp,0o755); os.replace(tmp,dst)
 __PP_EXTRACT__
 useradd --system --user-group --home /nonexistent --shell /usr/sbin/nologin pp-lab-i
 install -d -m 0750 -o root -g pp-lab-i /etc/privatpirat/pp-lab-i; umask 077
+printf 'STAGE_I_STEP=KEYGEN\n'
 python3 - <<'__PP_UUID__' > "$ROOT/i.uuid"
 import uuid; print(uuid.uuid4())
 __PP_UUID__
 "$XRAY" x25519 > "$ROOT/i.keys"; openssl rand -hex 8 > "$ROOT/i.sid"
+printf 'STAGE_I_STEP=CONFIG\n'
 python3 - "$ROOT/runtime.json" "$ROOT/i.uuid" "$ROOT/i.keys" "$ROOT/i.sid" "$CFG" "$MAT" {port} <<'__PP_CFG__'
 import json,pathlib,sys
 runtime,uf,kf,sf,cfgf,matf,port=sys.argv[1:]
 cover=json.load(open(runtime))["cover_hostname"]; u=pathlib.Path(uf).read_text().strip(); sid=pathlib.Path(sf).read_text().strip(); lines=pathlib.Path(kf).read_text().splitlines()
 priv=next(x.split(": ",1)[1] for x in lines if x.startswith("PrivateKey: ")); pub=next(x.split(": ",1)[1] for x in lines if x.startswith("Password (PublicKey): "))
-cfg={{"log":{{"loglevel":"warning"}},"inbounds":[{{"listen":"0.0.0.0","port":int(port),"protocol":"vless","settings":{{"clients":[{{"id":u,"flow":"xtls-rprx-vision"}}],"decryption":"none"}},"streamSettings":{{"network":"raw","security":"reality","realitySettings":{{"show":False,"target":cover+":443","serverNames":[cover],"privateKey":priv,"shortIds":[sid]}}}}}}],"outbounds":[{{"protocol":"freedom","tag":"direct"}}]}}
+cfg={{"log":{{"loglevel":{loglevel!r}}},"inbounds":[{{"listen":"0.0.0.0","port":int(port),"protocol":"vless","settings":{{"clients":[{{"id":u,"flow":"xtls-rprx-vision"}}],"decryption":"none"}},"streamSettings":{{"network":"raw","security":"reality","realitySettings":{{"show":False,"target":cover+":443","serverNames":[cover],"privateKey":priv,"shortIds":[sid]}}}}}}],"outbounds":[{{"protocol":"freedom","tag":"direct"}}]}}
 pathlib.Path(cfgf).write_text(json.dumps(cfg,indent=2)+"\\n"); pathlib.Path(matf).write_text(json.dumps({{"route":"I","uuid":u,"public_key":pub,"short_id":sid}})+"\\n")
 __PP_CFG__
 chown root:pp-lab-i "$CFG"; chmod 0640 "$CFG"; chmod 0600 "$MAT"; rm -f "$ROOT/i.uuid" "$ROOT/i.keys" "$ROOT/i.sid"
+printf 'STAGE_I_STEP=CONFIG_TEST\n'
 "$XRAY" run -test -config "$CFG" >/dev/null 2>&1
+printf 'STAGE_I_STEP=SYSTEMD\n'
+{diagnostic_stamp}
 cat > /etc/systemd/system/pp-lab-i.service <<'__PP_UNIT__'
 {unit}__PP_UNIT__
 systemctl daemon-reload; systemctl enable --now pp-lab-i.service >/dev/null
@@ -1178,14 +1406,20 @@ for _ in $(seq 1 25); do systemctl is-active --quiet pp-lab-i.service && ss -H -
 systemctl is-active --quiet pp-lab-i.service; ss -H -ltn | awk '{{print $4}}' | grep -Eq ':{port}$'
 trap - ERR HUP INT TERM; printf 'STAGE_I_APPLY=PASS\n'
 '''
+    if saved_pair:
+        start = script.index("printf 'STAGE_I_STEP=KEYGEN")
+        end = script.index('chown root:pp-lab-i')
+        script = script[:start] + '''printf 'STAGE_I_STEP=SAVED_CONFIG\n'
+install -m 0640 -o root -g pp-lab-i "$ROOT/source.server.json" "$CFG"
+install -m 0600 "$ROOT/source.material-I.json" "$MAT"
+''' + script[end:]
+    return _transactional_stage(script, Route.I, port)
 
 
 def stage_ii_apply_script(port: int) -> str:
-    unit = _systemd_unit("pp-lab-ii", f"{XRAY_INSTALL} run -config /etc/privatpirat/pp-lab-ii/config.json")
-    return f'''set -euo pipefail
+    unit = _systemd_unit("pp-lab-ii", f"{XRAY_INSTALL} run -config /etc/privatpirat/pp-lab-ii/config.json", privileged_port=port < 1024)
+    script = f'''set -euo pipefail
 ROOT={REMOTE_ROOT!r}; CFG=/etc/privatpirat/pp-lab-ii/config.json; MAT="$ROOT/material-II.json"; XRAY={XRAY_INSTALL!r}
-rollback() {{ systemctl disable --now pp-lab-ii.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-ii.service; rm -rf /etc/privatpirat/pp-lab-ii; userdel pp-lab-ii >/dev/null 2>&1 || true; rm -f "$MAT" "$ROOT"/ii.*; rmdir /etc/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true; }}
-trap 'rollback' ERR HUP INT TERM
 [ -x "$XRAY" ] && [ -f "$ROOT/runtime.json" ]; systemctl is-active --quiet pp-lab-i.service
 I_HASH_BEFORE="$(sha256sum /etc/privatpirat/pp-lab-i/config.json | awk '{{print $1}}')"; ! id pp-lab-ii >/dev/null 2>&1; ! ss -H -ltn | awk '{{print $4}}' | grep -Eq ':{port}$'
 useradd --system --user-group --home /nonexistent --shell /usr/sbin/nologin pp-lab-ii; install -d -m 0750 -o root -g pp-lab-ii /etc/privatpirat/pp-lab-ii; umask 077
@@ -1209,15 +1443,14 @@ for _ in $(seq 1 25); do systemctl is-active --quiet pp-lab-ii.service && ss -H 
 systemctl is-active --quiet pp-lab-i.service; systemctl is-active --quiet pp-lab-ii.service; [ "$I_HASH_BEFORE" = "$(sha256sum /etc/privatpirat/pp-lab-i/config.json | awk '{{print $1}}')" ]; ss -H -ltn | awk '{{print $4}}' | grep -Eq ':{port}$'
 trap - ERR HUP INT TERM; printf 'STAGE_II_APPLY=PASS\n'
 '''
+    return _transactional_stage(script, Route.II, port)
 
 
 def stage_iii_apply_script(port: int) -> str:
     spec = ARTIFACTS["hysteria-linux-amd64"]
-    unit = _systemd_unit("pp-lab-iii", f"{HYSTERIA_INSTALL} server -c /etc/privatpirat/pp-lab-iii/config.yaml")
-    return f'''set -euo pipefail
+    unit = _systemd_unit("pp-lab-iii", f"{HYSTERIA_INSTALL} server -c /etc/privatpirat/pp-lab-iii/config.yaml", privileged_port=port < 1024)
+    script = f'''set -euo pipefail
 ROOT={REMOTE_ROOT!r}; DIR=/etc/privatpirat/pp-lab-iii; CFG="$DIR/config.yaml"; MAT="$ROOT/material-III.json"; HY={HYSTERIA_INSTALL!r}
-rollback() {{ if [ -n "${{TEST_PID:-}}" ]; then kill "$TEST_PID" >/dev/null 2>&1 || true; fi; systemctl disable --now pp-lab-iii.service >/dev/null 2>&1 || true; rm -f /etc/systemd/system/pp-lab-iii.service; rm -rf "$DIR"; userdel pp-lab-iii >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}; rm -f "$MAT" "$ROOT/{spec.name}" "$ROOT/iii.auth" "$ROOT/iii-validate.log"; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true; }}
-trap 'rollback' ERR HUP INT TERM
 systemctl is-active --quiet pp-lab-i.service; systemctl is-active --quiet pp-lab-ii.service
 I_HASH_BEFORE="$(sha256sum /etc/privatpirat/pp-lab-i/config.json | awk '{{print $1}}')"; II_HASH_BEFORE="$(sha256sum /etc/privatpirat/pp-lab-ii/config.json | awk '{{print $1}}')"
 ! id pp-lab-iii >/dev/null 2>&1; ! ss -H -lun | awk '{{print $4}}' | grep -Eq ':{port}$'; printf '%s  %s\n' {spec.sha256!r} "$ROOT/{spec.name}" | sha256sum -c - >/dev/null
@@ -1235,7 +1468,7 @@ __PP_HY__
 unset AUTH; chown root:pp-lab-iii "$CFG" "$DIR/server.crt" "$DIR/server.key"; chmod 0640 "$CFG" "$DIR/server.crt" "$DIR/server.key"
 "$HY" server -c "$CFG" > "$ROOT/iii-validate.log" 2>&1 & TEST_PID=$!; SEEN=0
 for _ in $(seq 1 30); do if ss -H -lun | awk '{{print $4}}' | grep -Eq ':{port}$'; then SEEN=1; break; fi; kill -0 "$TEST_PID" >/dev/null 2>&1 || break; sleep .2; done
-kill "$TEST_PID" >/dev/null 2>&1 || true; wait "$TEST_PID" >/dev/null 2>&1 || true; [ "$SEEN" = 1 ]; rm -f "$ROOT/iii-validate.log"
+kill "$TEST_PID" >/dev/null 2>&1 || true; wait "$TEST_PID" >/dev/null 2>&1 || true; unset TEST_PID; [ "$SEEN" = 1 ]; rm -f "$ROOT/iii-validate.log"
 PIN="$(openssl x509 -in "$DIR/server.crt" -outform DER | sha256sum | awk '{{print $1}}')"; python3 - "$ROOT/iii.auth" "$PIN" "$MAT" <<'__PP_MAT__'
 import json,pathlib,sys
 authf,pin,matf=sys.argv[1:]; pathlib.Path(matf).write_text(json.dumps({{"route":"III","auth":pathlib.Path(authf).read_text().strip(),"pin_sha256":pin}})+"\\n")
@@ -1249,6 +1482,7 @@ systemctl is-active --quiet pp-lab-i.service; systemctl is-active --quiet pp-lab
 [ "$I_HASH_BEFORE" = "$(sha256sum /etc/privatpirat/pp-lab-i/config.json | awk '{{print $1}}')" ]; [ "$II_HASH_BEFORE" = "$(sha256sum /etc/privatpirat/pp-lab-ii/config.json | awk '{{print $1}}')" ]; ss -H -lun | awk '{{print $4}}' | grep -Eq ':{port}$'
 trap - ERR HUP INT TERM; printf 'STAGE_III_APPLY=PASS\n'
 '''
+    return _transactional_stage(script, Route.III, port)
 
 
 def server_action_script(route: Route, port: int, action: str) -> str:
@@ -1260,8 +1494,8 @@ def server_action_script(route: Route, port: int, action: str) -> str:
     prior_checks = "\n".join(f"systemctl is-active --quiet pp-lab-{p.value.lower()}.service" for p in prior)
     if action == "stop":
         body = f'''systemctl stop "$UNIT"
-! systemctl is-active --quiet "$UNIT"
-! ss -H {flag} | awk '{{print $4}}' | grep -Eq ':{port}$'
+if systemctl is-active --quiet "$UNIT"; then exit 32; fi
+LISTEN="$(ss -H {flag})"; if printf '%s\\n' "$LISTEN" | awk '{{print $4}}' | grep -Eq ':{port}$'; then exit 31; fi
 {prior_checks}'''
     else:
         if action == "health":
@@ -1284,25 +1518,17 @@ ss -H {flag} | awk '{{print $4}}' | grep -Eq ':{port}$'
 
 
 def rollback_script(route: Route, port: int | None = None) -> str:
+    cleanup = _stage_cleanup_script(route, port)
+    finish = ""
     if route is Route.I:
-        body = f'''systemctl disable --now pp-lab-i.service >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/pp-lab-i.service; rm -rf /etc/privatpirat/pp-lab-i; userdel pp-lab-i >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/xray-{XRAY_VERSION}; rm -rf {REMOTE_ROOT}; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true
-! id pp-lab-i >/dev/null 2>&1'''
-    elif route is Route.II:
-        body = f'''systemctl disable --now pp-lab-ii.service >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/pp-lab-ii.service; rm -rf /etc/privatpirat/pp-lab-ii; userdel pp-lab-ii >/dev/null 2>&1 || true; rm -f {REMOTE_ROOT}/material-II.json {REMOTE_ROOT}/ii.*; rmdir /etc/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl is-active --quiet pp-lab-i.service; ! id pp-lab-ii >/dev/null 2>&1'''
-    else:
-        body = f'''systemctl disable --now pp-lab-iii.service >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/pp-lab-iii.service; rm -rf /etc/privatpirat/pp-lab-iii; userdel pp-lab-iii >/dev/null 2>&1 || true; rm -rf /usr/local/lib/privatpirat/hysteria-{HYSTERIA_VERSION}; rm -f {REMOTE_ROOT}/material-III.json {REMOTE_ROOT}/{ARTIFACTS["hysteria-linux-amd64"].name} {REMOTE_ROOT}/iii.*; rmdir /etc/privatpirat /usr/local/lib/privatpirat 2>/dev/null || true; systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl is-active --quiet pp-lab-i.service; systemctl is-active --quiet pp-lab-ii.service; ! id pp-lab-iii >/dev/null 2>&1'''
-    listener = ""
-    if port is not None:
-        if not 1 <= int(port) <= 65535:
-            raise ValueError("invalid port")
-        flag = "-ltn" if route in {Route.I, Route.II} else "-lun"
-        listener = f"\n! ss -H {flag} | awk '{{print $4}}' | grep -Eq ':{int(port)}$'"
-    return f"set -euo pipefail\n{body}{listener}\nprintf 'ROLLBACK_{route.value}=PASS\\n'\n"
+        finish = f'''rm -f "$ROOT/runtime.json" "$ROOT/owner.json" "$ROOT/{ARTIFACTS['xray-linux-amd64'].name}" "$ROOT/source.server.json" "$ROOT/source.material-I.json"
+rmdir "$ROOT"
+'''
+    elif route is Route.III:
+        finish = f'rm -f "$ROOT/{ARTIFACTS["hysteria-linux-amd64"].name}"\n'
+    return ("set -euo pipefail\n" + cleanup + 'rollback_current\n'
+            + 'rm -f "$MARK/run-id"\nrmdir "$MARK"\n' + finish
+            + f"printf 'ROLLBACK_{route.value}=PASS\\n'\n")
 
 
 def owner_initialize_script(run_id: str, ports: Ports) -> str:
@@ -1336,7 +1562,7 @@ if accepted==expected_prefix+[route]:
 if accepted!=expected_prefix: raise SystemExit(41)
 d.setdefault("config_sha256",{{}})[route]=h; d["accepted"]=accepted+[route]
 fd,tmp=tempfile.mkstemp(dir=str(p.parent),prefix=".owner-")
-with os.fdopen(fd,"w") as f: json.dump(d,f,separators=(",",":")); f.write("\n"); f.flush(); os.fsync(f.fileno())
+with os.fdopen(fd,"w") as f: json.dump(d,f,separators=(",",":")); f.write("\\n"); f.flush(); os.fsync(f.fileno())
 os.chmod(tmp,0o600); os.replace(tmp,p)
 __PP_CHECKPOINT__
 printf 'OWNER_CHECKPOINT_{route.value}=PASS\n'
@@ -1369,7 +1595,7 @@ def resume_probe_script(state: PersistentState) -> str:
                 f"! systemctl is-active --quiet {unit} 2>/dev/null || false",
                 f"[ ! -e /etc/systemd/system/{unit} ]",
                 f"[ ! -e {cfg_dirs[route]} ]",
-                f"! ss -H {flag} | awk '{{print $4}}' | grep -Eq ':{port}$'",
+                f'''LISTEN="$(ss -H {flag})"; if printf '%s\\n' "$LISTEN" | awk '{{print $4}}' | grep -Eq ':{port}$'; then exit 31; fi''',
             ]
     return f'''set -euo pipefail
 python3 - {REMOTE_ROOT}/owner.json {expected_json!r} <<'__PP_RESUME__'
@@ -1407,6 +1633,7 @@ class StageExecutor(Protocol):
     def fetch_material(self, route: Route) -> RouteMaterial: ...
     def checkpoint(self, run_id: str, route: Route) -> None: ...
     def rollback(self, route: Route) -> None: ...
+    def capture_diagnostics(self, route: Route) -> bool: ...
     def finalize(self) -> None: ...
 
 
@@ -1418,10 +1645,14 @@ class ClientVerifier(Protocol):
 class SSHStageExecutor:
     """Concrete remote executor; unreachable from CLI until R3-SERVER."""
 
-    def __init__(self, session: RemoteSession, ports: Ports, runtime: RuntimePrivateInput, artifacts: Mapping[str, Path], private_dir: Path):
+    def __init__(self, session: RemoteSession, ports: Ports, runtime: RuntimePrivateInput, artifacts: Mapping[str, Path], private_dir: Path, *, diagnostic_run_id: str | None = None, saved_route_i: Path | None = None, paired_control: bool = False):
         if session.control_path is None:
             raise BuilderStop("SSH_CONTROLMASTER_REQUIRED=STOP")
         self.session, self.ports, self.runtime, self.artifacts, self.private_dir = session, ports, runtime, artifacts, private_dir
+        self.diagnostic_run_id = diagnostic_run_id
+        self.saved_route_i = saved_route_i
+        self.paired_control = paired_control
+        self.control_attempted = False
         ensure_private_dir(private_dir)
 
     def _run(self, script: str, marker: str, timeout: int = 90) -> None:
@@ -1430,7 +1661,27 @@ class SSHStageExecutor:
         except subprocess.TimeoutExpired as exc:
             raise BuilderStop("REMOTE_STAGE_TIMEOUT=STOP") from exc
         if proc.returncode or marker not in proc.stdout.splitlines():
+            if marker == "STAGE_I_APPLY=PASS":
+                steps = re.findall(r"(?m)^STAGE_I_STEP=([A-Z_]+)$", proc.stdout)
+                raise BuilderStop(f"REMOTE_STAGE_I_{steps[-1] if steps else 'START'}_FAIL=STOP")
             raise BuilderStop(f"REMOTE_STAGE_FAILED={marker}")
+
+    def _save_upload_error(self, stderr: bytes | str | None, returncode: int | None, timed_out: bool) -> None:
+        directory = self.private_dir / 'diagnostics' / (self.diagnostic_run_id or 'ssh')
+        try:
+            ensure_private_dir(directory)
+            fd, name = tempfile.mkstemp(prefix='ssh-upload-', suffix='.stderr', dir=directory)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, 'wb') as handle:
+                handle.write(stderr.encode('utf-8') if isinstance(stderr, str) else stderr or b'')
+                handle.flush()
+                os.fsync(handle.fileno())
+            write_private(Path(name).with_suffix('.json'), json.dumps({
+                'operation': 'SSH_STREAM_UPLOAD', 'ssh_returncode': returncode,
+                'timed_out': timed_out, 'stderr_file': Path(name).name,
+            }))
+        except OSError as exc:
+            raise BuilderStop('SSH_UPLOAD_DIAGNOSTIC_SAVE_FAIL=STOP') from exc
 
     def _scp_to(self, local: Path, remote: str) -> None:
         quoted = shlex.quote(remote)
@@ -1441,15 +1692,17 @@ class SSHStageExecutor:
         try:
             with local.open("rb") as handle:
                 proc = subprocess.run(
-                    _ssh_base(self.session) + [remote_cmd],
+                    _ssh_base(replace(self.session, control_path=None)) + [remote_cmd],
                     stdin=handle,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     timeout=90,
                 )
         except subprocess.TimeoutExpired as exc:
+            self._save_upload_error(exc.stderr, None, True)
             raise BuilderStop("SSH_STREAM_UPLOAD_TIMEOUT=STOP") from exc
         if proc.returncode:
+            self._save_upload_error(proc.stderr, proc.returncode, False)
             raise BuilderStop("SSH_STREAM_UPLOAD_FAIL=STOP")
 
     def _scp_from(self, remote: str, local: Path) -> None:
@@ -1457,7 +1710,7 @@ class SSHStageExecutor:
         remote_cmd = _privileged_bash_command(self.session, f"cat {quoted}")
         try:
             proc = subprocess.run(
-                _ssh_base(self.session) + [remote_cmd],
+                _ssh_base(replace(self.session, control_path=None)) + [remote_cmd],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=90,
@@ -1494,7 +1747,18 @@ class SSHStageExecutor:
         if route is Route.I:
             spec = ARTIFACTS["xray-linux-amd64"]
             self._scp_to(self.artifacts["server_xray_archive"], f"{REMOTE_ROOT}/{spec.name}")
-            script = stage_i_apply_script(self.ports.route_i_tcp)
+            if self.saved_route_i is not None:
+                self._scp_to(self.saved_route_i/'verify-I-1-1.server.json', f'{REMOTE_ROOT}/source.server.json')
+                client = json.loads((self.saved_route_i/'verify-I-1-1.json').read_text())
+                peer, = [o for o in client['outbounds'] if o['protocol'] == 'vless']
+                user, = peer['settings']['vnext'][0]['users']
+                reality = peer['streamSettings']['realitySettings']
+                material = RouteMaterial(Route.I, uuid=user['id'], public_key=reality['password'], short_id=reality['shortId'])
+                material.validate()
+                path = self.private_dir/'diagnostics'/self.diagnostic_run_id/'source.material-I.json'
+                write_private(path, json.dumps(asdict(material)))
+                self._scp_to(path, f'{REMOTE_ROOT}/source.material-I.json')
+            script = stage_i_apply_script(self.ports.route_i_tcp, diagnostic=self.diagnostic_run_id is not None, saved_pair=self.saved_route_i is not None)
         elif route is Route.II:
             script = stage_ii_apply_script(self.ports.route_ii_tcp)
         else:
@@ -1529,6 +1793,170 @@ class SSHStageExecutor:
         except FileNotFoundError:
             pass
 
+    def snapshot_route_i_config(self, destination: Path) -> None:
+        if self.diagnostic_run_id is None:
+            raise BuilderStop("SERVER_CONFIG_SNAPSHOT_REQUIRES_DIAGNOSTIC=STOP")
+        try:
+            self._scp_from("/etc/privatpirat/pp-lab-i/config.json", destination)
+            if not 0 < destination.stat().st_size <= 512_000:
+                raise BuilderStop("SERVER_CONFIG_SNAPSHOT_LIMIT=STOP")
+            if self.saved_route_i is not None and json.loads(destination.read_text()) != json.loads((self.saved_route_i/'verify-I-1-1.server.json').read_text()):
+                raise BuilderStop('INSTALLED_SAVED_CONFIG_CHANGED=STOP')
+            if self.paired_control:
+                write_private(destination.with_suffix('.meta.json'), json.dumps(self.route_i_process_info()))
+        except (OSError, BuilderStop) as exc:
+            raise BuilderStop("SERVER_CONFIG_SNAPSHOT_FAIL=STOP") from exc
+
+    def _read_diagnostic(self, script: str) -> str:
+        try:
+            proc = subprocess.run(_ssh_base(self.session)+_privileged_bash_argv(self.session), input=script, text=True, capture_output=True, timeout=20)
+        except subprocess.TimeoutExpired as exc:
+            raise BuilderStop('PAIRED_DIAGNOSTIC_READ_TIMEOUT=STOP') from exc
+        if proc.returncode or len(proc.stdout.encode()) > 1_024_000:
+            raise BuilderStop('PAIRED_DIAGNOSTIC_READ_FAIL=STOP')
+        return proc.stdout
+
+    @staticmethod
+    def route_i_process_program() -> str:
+        prefix = SAVED_LOOPBACK_AGENT.partition("if sys.argv[1] == 'prepare-live':")[0]
+        program = prefix + '''
+try: value=identity()
+except RuntimeError: value=None
+rows=[]
+if value:
+    sockets=subprocess.run(['ss','-Htnp'],capture_output=True,text=True,timeout=3)
+    if sockets.returncode: raise SystemExit(2)
+    rows=[line for line in sockets.stdout.splitlines() if ('pid='+str(value['pid'])+',') in line]
+print(json.dumps({'identity':value,'observed_epoch':time.time(),'platform':'/'.join((platform.system(),platform.release(),platform.machine())),'tcp_socket_rows':rows}))
+'''
+        return program
+
+    def route_i_process_info(self) -> dict[str, object]:
+        return json.loads(self._read_diagnostic("python3 - <<'PY'\n"+self.route_i_process_program()+'\nPY\n'))
+
+    def paired_failure_control(self, route: Route, error: Exception, verifier: 'LocalClientVerifier') -> None:
+        eligible = re.fullmatch(r'(?:CLIENT_CURL_EXIT_\d+|CLIENT_(?:TCP_PORT_UNREACHABLE|HTTP_PROBE_FAIL|HTTPS_PROBE_FAIL|EXIT_PROBE_FAIL|EXIT_IP_INVALID|EXIT_IP_MISMATCH|ACCEPTANCE_FAIL))=STOP', str(error))
+        if not self.paired_control or route is not Route.I or not eligible or verifier.last_route_i_probe is None:
+            return
+        if self.control_attempted:
+            raise BuilderStop('PAIRED_CONTROL_ALREADY_USED=STOP')
+        self.control_attempted = True
+        cfg = verifier.last_route_i_config
+        if cfg is None: raise BuilderStop('PAIRED_EXTERNAL_CONFIG_MISSING=STOP')
+        directory = self.private_dir/'diagnostics'/self.diagnostic_run_id/'control-I'
+        ensure_private_dir(directory)
+        server_snapshot = cfg.with_suffix('.server.json')
+        process_snapshot = cfg.with_suffix('.server.meta.json')
+        before = json.loads(process_snapshot.read_text())
+        current = self.route_i_process_info()
+        write_private(directory/'external-process.json', json.dumps(before))
+        write_private(directory/'before-control-process.json', json.dumps(current))
+        if not before['identity'] or before['identity'] != current['identity']:
+            raise BuilderStop('PAIRED_SERVER_PROCESS_CHANGED=STOP')
+        url = str(verifier.last_route_i_probe['url'])
+        if url not in (HTTP_PROBE_URL, HTTPS_PROBE_URL, *EXIT_IP_URLS):
+            raise BuilderStop('PAIRED_PROBE_URL_INVALID=STOP')
+        if not self.capture_diagnostics(Route.I): raise BuilderStop('PAIRED_EXTERNAL_CAPTURE_FAIL=STOP')
+        parent = directory.parent
+        for name in ('server-I.log','server-I.jsonl','status-I.json'):
+            write_private(directory/('external-'+name), (parent/name).read_text())
+        write_private(directory/'source.client.json', cfg.read_text())
+        write_private(directory/'external.server.json', server_snapshot.read_text())
+        write_private(directory/'external-attempt.json', json.dumps(verifier.last_route_i_probe))
+        write_private(directory/'agent.py', SAVED_LOOPBACK_AGENT)
+        write_private(directory/'control.json', json.dumps({'identity':before['identity'],'url':url}))
+        remote = '/tmp/pp-lab-control-I-'+self.diagnostic_run_id
+        self._run(f'set -eu\ncommand -v timeout >/dev/null\ntest ! -e {remote}\numask 077\nmkdir -m 700 {remote}\nprintf "PAIRED_DIR=PASS\\n"\n','PAIRED_DIR=PASS')
+        collected = False
+        try:
+            for name in ('agent.py','source.client.json','control.json'):
+                self._scp_to(directory/name, remote+'/'+name)
+            self._run(f'python3 {remote}/agent.py prepare-live {XRAY_INSTALL}\n','LIVE_CLIENT_PREPARE=PASS',timeout=20)
+            for name in ('server.json','client.json'):
+                self._scp_from(remote+'/'+name,directory/name)
+            actual_server, actual_client = (directory/'server.json').read_text(), (directory/'client.json').read_text()
+            expected = json.loads(cfg.read_text()); actual = json.loads(actual_client)
+            expected['inbounds'][0].update(listen='127.0.0.1',port=actual['inbounds'][0]['port'])
+            peer, = [o for o in expected['outbounds'] if o['protocol']=='vless']
+            peer['settings']['vnext'][0]['address'] = '127.0.0.1'
+            if expected != actual or json.loads(actual_server) != json.loads(server_snapshot.read_text()):
+                raise BuilderStop('PAIRED_CONFIG_PRESERVATION_FAIL=STOP')
+            port = json.loads(actual_server)['inbounds'][0]['port']
+            comparison = compare_route_i_configs(actual_server,actual_client,'127.0.0.1',port)
+            write_private(directory/'comparison.json',json.dumps(comparison))
+            if set(comparison.values()) != {'MATCH'}: raise BuilderStop('PAIRED_CONFIG_MISMATCH=STOP')
+            self._run(f'timeout --signal=TERM --kill-after=5s 40s python3 {remote}/agent.py live-client\n','LOOPBACK_FINISHED=SAVED',timeout=55)
+            self._scp_from(remote+'/result.json',directory/'result.json')
+            result = json.loads((directory/'result.json').read_text())
+            allowed = {'client.log','client.config-test.log','loopback.stderr','loopback.status','loopback.body'}
+            if set(result['saved_files'])-allowed: raise BuilderStop('PAIRED_MANIFEST_INVALID=STOP')
+            for name in result['saved_files']: self._scp_from(remote+'/'+name,directory/name)
+            if result['processes_remaining'] or result['listeners_remaining']: raise BuilderStop('PAIRED_CLIENT_CLEANUP_FAIL=STOP')
+            collected = True
+            if result.get('server_identity_before') != before['identity'] or result.get('server_identity_after') != before['identity']:
+                raise BuilderStop('PAIRED_SERVER_PROCESS_CHANGED_AFTER=STOP')
+            print('PAIRED_LOOPBACK_CONTROL='+('PASS' if not result['error'] and result.get('loopback_http',{}).get('ok') else 'FAIL'))
+        finally:
+            # The live server belongs to the enclosing stage, never this cleanup.
+            script = f'''python3 - <<'PY'
+import pathlib,shutil
+p=pathlib.Path('{remote}')
+assert p.parent==pathlib.Path('/tmp') and not p.is_symlink()
+for entry in pathlib.Path('/proc').iterdir():
+    if entry.name.isdigit():
+        try: cmd=(entry/'cmdline').read_bytes()
+        except (FileNotFoundError,PermissionError,ProcessLookupError): continue
+        if (str(p)+'/client.json').encode() in cmd: raise SystemExit(2)
+if {collected!r}: shutil.rmtree(p)
+PY
+test $? = 0 && printf 'PAIRED_CLEANUP=PASS\\n'
+'''
+            self._run(script,'PAIRED_CLEANUP=PASS',timeout=10)
+
+    def capture_diagnostics(self, route: Route) -> bool:
+        if self.diagnostic_run_id is None or route is not Route.I:
+            return False
+        script = f'''set -euo pipefail
+STAMP={REMOTE_ROOT}/i.journal_since
+if [ ! -f "$STAMP" ]; then
+    printf 'NO_SERVER_START_MARKER\n'
+    exit 0
+fi
+journalctl --no-pager --output=short-iso -u pp-lab-i.service --since "$(cat "$STAMP")" --lines=400
+'''
+        try:
+            proc = subprocess.run(
+                _ssh_base(self.session) + _privileged_bash_argv(self.session),
+                input=script, text=True, capture_output=True, timeout=20,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BuilderStop("SERVER_DIAGNOSTIC_TIMEOUT=STOP") from exc
+        if proc.returncode:
+            raise BuilderStop("SERVER_DIAGNOSTIC_READ_FAIL=STOP")
+        if len(proc.stdout.encode("utf-8")) > 512_000:
+            raise BuilderStop("SERVER_DIAGNOSTIC_LIMIT=STOP")
+        directory = self.private_dir / "diagnostics" / self.diagnostic_run_id
+        log = directory / "server-I.log"
+        write_private(log, proc.stdout)
+        if self.paired_control:
+            raw = self._read_diagnostic(f'''set -euo pipefail
+journalctl --no-pager --output=json -u pp-lab-i.service --since "$(cat {REMOTE_ROOT}/i.journal_since)" --lines=400
+''')
+            write_private(directory/'server-I.jsonl', raw)
+        client_dir = self.private_dir / "verify" / self.diagnostic_run_id
+        client_logs = sorted(client_dir.glob("verify-I-*.log")) if client_dir.is_dir() else []
+        lower = proc.stdout.lower()
+        status = {
+            "server_log_saved": True,
+            "server_start_marker_found": "NO_SERVER_START_MARKER" not in proc.stdout,
+            "server_log_nonempty": bool(proc.stdout.strip()),
+            "client_logs_saved": len(client_logs),
+            "server_invalid_connection_count": lower.count("reality: processed invalid connection"),
+            "server_inbound_request_count": lower.count("proxy/vless/inbound: received request"),
+        }
+        write_private(directory / "status-I.json", json.dumps(status, sort_keys=True) + "\n")
+        return True
+
     def finalize(self) -> None:
         self._run(finalize_remote_script(), "REMOTE_FINALIZE=PASS")
 
@@ -1540,9 +1968,19 @@ class LocalClientVerifier:
     behavior. Formal leak-oriented acceptance remains a separate checkpoint.
     """
 
-    def __init__(self, host: str, ports: Ports, runtime: RuntimePrivateInput, expected_egress_ip: str, artifacts: Mapping[str, Path], private_dir: Path):
+    def __init__(self, host: str, ports: Ports, runtime: RuntimePrivateInput, expected_egress_ip: str, artifacts: Mapping[str, Path], private_dir: Path, *, verify_external_tcp: bool = False, preserve_logs: bool = False, route_i_snapshot: Callable[[Path], None] | None = None, route_i_template: Path | None = None):
         self.host = validate_host(host); self.ports = ports; self.runtime = runtime
         self.expected_egress_ip = str(ipaddress.ip_address(expected_egress_ip)); self.artifacts = artifacts; self.private_dir = private_dir
+        self.verify_external_tcp = verify_external_tcp
+        self.preserve_logs = preserve_logs
+        self.route_i_snapshot = route_i_snapshot
+        self.route_i_template = route_i_template
+        self.last_route_i_probe: dict[str, object] | None = None
+        self.last_route_i_config: Path | None = None
+        self._route_i_probe_events: list[dict[str, object]] = []
+        if route_i_snapshot is not None and not preserve_logs:
+            raise BuilderStop("CONFIG_PAIR_REQUIRES_PROTECTED_DIAGNOSTIC=STOP")
+        self._log_sequence = 0
         ensure_private_dir(private_dir)
 
     @staticmethod
@@ -1569,7 +2007,9 @@ class LocalClientVerifier:
             raise BuilderStop("CLIENT_VERIFIER_CURL_TIMEOUT=STOP") from exc
         except OSError as exc:
             raise BuilderStop("CLIENT_VERIFIER_EXEC_FAIL=STOP") from exc
-        if proc.returncode or "\n" not in proc.stdout:
+        if proc.returncode:
+            raise BuilderStop(f"CLIENT_CURL_EXIT_{proc.returncode}=STOP")
+        if "\n" not in proc.stdout:
             raise BuilderStop("CLIENT_DATA_PATH_FAIL=STOP")
         body, raw_status = proc.stdout.rsplit("\n", 1)
         try: status = int(raw_status)
@@ -1591,6 +2031,13 @@ class LocalClientVerifier:
         return proc.stdout.strip()
 
     def _command(self, route: Route, material: RouteMaterial, socks_port: int, cfg: Path) -> list[str]:
+        if route is Route.I and self.route_i_template is not None:
+            value = json.loads(self.route_i_template.read_text())
+            value['inbounds'][0].update(listen='127.0.0.1', port=socks_port)
+            peer, = [o for o in value['outbounds'] if o['protocol'] == 'vless']
+            peer['settings']['vnext'][0].update(address=self.host, port=self.ports.route_i_tcp)
+            write_private(cfg, json.dumps(value))
+            return [str(self.artifacts['client_xray']), 'run', '-config', str(cfg)]
         if route in {Route.I, Route.II}:
             write_private(cfg, render_xray_client_config(route, self.host, self.ports.for_route(route), material, self.runtime.cover_hostname, socks_port))
             return [str(self.artifacts["client_xray"]), "run", "-config", str(cfg)]
@@ -1601,14 +2048,37 @@ class LocalClientVerifier:
     def _client(self, route: Route, material: RouteMaterial, index: int):
         socks = self._free_local_port()
         suffix = "json" if route in {Route.I, Route.II} else "yaml"
-        cfg = self.private_dir / f"verify-{route.value}-{index}.{suffix}"
-        log = self.private_dir / f"verify-{route.value}-{index}.log"
+        stem = f"verify-{route.value}-{index}"
+        if self.preserve_logs:
+            self._log_sequence += 1
+            stem += f"-{self._log_sequence}"
+        cfg = self.private_dir / f"{stem}.{suffix}"
+        if route is Route.I and self.route_i_template is not None:
+            self.last_route_i_config = cfg
+            self.last_route_i_probe = None
+            self._route_i_probe_events = []
+        log = self.private_dir / f"{stem}.log"
         cmd = self._command(route, material, socks, cfg)
         proc: subprocess.Popen[str] | None = None
         ensure_private_dir(log.parent)
         with log.open("w", encoding="utf-8") as client_log:
             os.chmod(log, 0o600)
             try:
+                if route is Route.I and self.route_i_snapshot is not None:
+                    server_cfg = self.private_dir / f"{stem}.server.json"
+                    self.route_i_snapshot(server_cfg)
+                    try:
+                        comparison = compare_route_i_configs(
+                            server_cfg.read_text(encoding="utf-8"), cfg.read_text(encoding="utf-8"),
+                            self.host, self.ports.route_i_tcp,
+                        )
+                    except (OSError, UnicodeError) as exc:
+                        raise BuilderStop("ROUTE_I_CONFIG_PAIR_READ_FAIL=STOP") from exc
+                    write_private(self.private_dir / f"{stem}.comparison.json", json.dumps(comparison) + "\n")
+                    for field, verdict in comparison.items():
+                        print(f"CONFIG_PAIR_I_{field}={verdict}")
+                    if any(verdict != "MATCH" for verdict in comparison.values()):
+                        raise BuilderStop("ROUTE_I_CONFIG_PAIR_MISMATCH=STOP")
                 try:
                     proc = subprocess.Popen(
                         cmd, text=True, stdout=client_log,
@@ -1629,10 +2099,14 @@ class LocalClientVerifier:
                     except subprocess.TimeoutExpired:
                         proc.kill()
                         proc.wait(timeout=3)
-                try:
-                    cfg.unlink()
-                except FileNotFoundError:
-                    pass
+                if route is Route.I and self.last_route_i_probe is not None and self.route_i_template is not None:
+                    self.last_route_i_probe['ended_at_epoch'] = time.time()
+                    write_private(cfg.with_suffix('.attempt.json'), json.dumps(self.last_route_i_probe))
+                if not (route is Route.I and self.route_i_snapshot is not None):
+                    try:
+                        cfg.unlink()
+                    except FileNotFoundError:
+                        pass
 
     @staticmethod
     def _discard_log(path: Path) -> None:
@@ -1641,29 +2115,45 @@ class LocalClientVerifier:
         except FileNotFoundError:
             pass
 
-    def _verify_round(self, route: Route, material: RouteMaterial, index: int) -> bool:
-        with self._client(route, material, index) as (socks, proc, log):
+    def _external_tcp_probe(self, route: Route) -> None:
+        if route in {Route.I, Route.II}:
             try:
+                with socket.create_connection((self.host, self.ports.for_route(route)), timeout=5):
+                    pass
+            except OSError as exc:
+                raise BuilderStop("CLIENT_TCP_PORT_UNREACHABLE=STOP") from exc
+
+    def _verify_round(self, route: Route, material: RouteMaterial, index: int) -> bool:
+        config_pair = route is Route.I and self.route_i_snapshot is not None
+        if self.verify_external_tcp and not config_pair:
+            self._external_tcp_probe(route)
+        with self._client(route, material, index) as (socks, proc, log):
+            if self.verify_external_tcp and config_pair:
+                self._record_external_probe(route, HTTP_PROBE_URL, 'TCP_CONNECT')
+                self._external_tcp_probe(route)
+            try:
+                self._record_external_probe(route, HTTP_PROBE_URL)
                 self._curl_status_body(socks, HTTP_PROBE_URL)
             except BuilderStop as exc:
                 if proc.poll() is not None:
                     raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP") from exc
-                if str(exc).startswith("CLIENT_VERIFIER_"):
+                if str(exc).startswith(("CLIENT_VERIFIER_", "CLIENT_CURL_EXIT_")):
                     raise
                 raise BuilderStop("CLIENT_HTTP_PROBE_FAIL=STOP") from exc
             try:
+                self._record_external_probe(route, HTTPS_PROBE_URL)
                 self._curl_status_body(socks, HTTPS_PROBE_URL)
             except BuilderStop as exc:
                 if proc.poll() is not None:
                     raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP") from exc
-                if str(exc).startswith("CLIENT_VERIFIER_"):
+                if str(exc).startswith(("CLIENT_VERIFIER_", "CLIENT_CURL_EXIT_")):
                     raise
                 raise BuilderStop("CLIENT_HTTPS_PROBE_FAIL=STOP") from exc
             try:
-                exits = [
-                    str(ipaddress.ip_address(self._curl_text(socks, url)))
-                    for url in EXIT_IP_URLS
-                ]
+                exits = []
+                for url in EXIT_IP_URLS:
+                    self._record_external_probe(route, url)
+                    exits.append(str(ipaddress.ip_address(self._curl_text(socks, url))))
             except BuilderStop as exc:
                 if proc.poll() is not None:
                     raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP") from exc
@@ -1678,8 +2168,23 @@ class LocalClientVerifier:
                 exits[0], self.expected_egress_ip
             ):
                 raise BuilderStop("CLIENT_EXIT_IP_MISMATCH=STOP")
-        self._discard_log(log)
+        if not self.preserve_logs:
+            self._discard_log(log)
         return True
+
+    def _record_external_probe(self, route: Route, url: str, phase: str = 'CURL') -> None:
+        if route is Route.I and self.route_i_template is not None and self.last_route_i_config is not None:
+            self._route_i_probe_events.append({'url':url,'phase':phase,'started_at_epoch':time.time()})
+            self.last_route_i_probe = {
+                'url': url, 'phase': phase, 'started_at_epoch': time.time(),
+                'destination': self.host, 'port': self.ports.route_i_tcp,
+                'platform': '/'.join((platform.system(),platform.release(),platform.machine())), 'wsl': 'microsoft' in platform.release().lower(),
+                'client_uid': os.getuid() if hasattr(os,'getuid') else None,
+                'proxy_environment_present': {name: bool(os.environ.get(name)) for name in ('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY')},
+                'vpn_state': 'NOT_OBSERVED',
+                'probe_events': list(self._route_i_probe_events),
+            }
+            write_private(self.last_route_i_config.with_suffix('.attempt.json'), json.dumps(self.last_route_i_probe))
 
     @staticmethod
     def _curl_route_unavailable(socks_port: int, url: str) -> bool:
@@ -1715,7 +2220,8 @@ class LocalClientVerifier:
                 if proc.poll() is not None:
                     raise BuilderStop("CLIENT_VERIFIER_PROCESS_EXIT=STOP")
             confirmed = all(unavailable)
-        self._discard_log(log)
+        if not self.preserve_logs:
+            self._discard_log(log)
         return confirmed
 
 
@@ -1754,13 +2260,15 @@ class DeploymentEngine:
     this engine never upgrades missing network or DNS-leak evidence to PASS.
     """
 
-    def __init__(self, executor: StageExecutor, verifier: ClientVerifier, bundle_dir: Path, host: str, ports: Ports, runtime: RuntimePrivateInput, run_id: str, ledger: AcceptanceLedger | None = None, accepted_materials: Mapping[Route, RouteMaterial] | None = None, accepted_routes: Sequence[Route] | None = None, on_state=None):
+    def __init__(self, executor: StageExecutor, verifier: ClientVerifier, bundle_dir: Path, host: str, ports: Ports, runtime: RuntimePrivateInput, run_id: str, ledger: AcceptanceLedger | None = None, accepted_materials: Mapping[Route, RouteMaterial] | None = None, accepted_routes: Sequence[Route] | None = None, on_state=None, server_only: bool = False, failure_diagnostic: Callable[[Route, Exception], None] | None = None):
         self.executor, self.verifier, self.bundle_dir, self.host, self.ports, self.runtime = executor, verifier, bundle_dir, host, ports, runtime
         self.run_id = run_id; self.ledger = ledger or AcceptanceLedger(); self.materials = dict(accepted_materials or {})
         self.accepted = list(accepted_routes) if accepted_routes is not None else [r for r in Route if r in self.materials]
         if any(route not in self.materials for route in self.accepted):
             raise BuilderStop("ACCEPTED_MATERIAL_MISSING=STOP")
         self.on_state = on_state
+        self.server_only = server_only
+        self.failure_diagnostic = failure_diagnostic
         self.state = {0: State.PREFLIGHT_PASS, 1: State.I_PASS, 2: State.II_PASS, 3: State.III_PASS}[len(self.accepted)]
 
     def _persist(self, failed: Route | None = None) -> None:
@@ -1772,11 +2280,32 @@ class DeploymentEngine:
     def _previous(self, route: Route) -> list[Route]:
         return {Route.I: [], Route.II: [Route.I], Route.III: [Route.I, Route.II]}[route]
 
+    def _verify_rollback_regression(self, route: Route) -> None:
+        for prior in self._previous(route):
+            try:
+                if not self.verifier.verify(prior, self.materials[prior], rounds=3):
+                    raise BuilderStop("ROLLBACK_REGRESSION_FAIL=STOP")
+            except Exception as exc:
+                self.ledger.failed_routes.add(prior.value)
+                self.state = State.STOPPED
+                self._persist(route)
+                raise BuilderStop("ROLLBACK_REGRESSION_FAIL=STOP") from exc
+
     def _fail(self, route: Route, error: Exception) -> None:
         self.ledger.reset_route_evidence(route); self.ledger.failed_routes.add(route.value); self.state = State.STAGE_FAIL
+        if self.failure_diagnostic is not None:
+            try: self.failure_diagnostic(route, error)
+            except Exception: print(f'FAILURE_DIAGNOSTIC_{route.value}=FAIL')
+        try:
+            if self.executor.capture_diagnostics(route):
+                print(f"DIAGNOSTIC_CAPTURE_{route.value}=SAVED")
+        except Exception:
+            # Evidence collection must never prevent the current-stage rollback.
+            print(f"DIAGNOSTIC_CAPTURE_{route.value}=FAIL")
         try: self.executor.rollback(route)
         except Exception as rollback_error:
             self.state = State.STOPPED; self._persist(route); raise BuilderStop("ROLLBACK_VERIFICATION_FAIL=STOP") from rollback_error
+        self._verify_rollback_regression(route)
         self.state = State.ROLLED_BACK; self._persist(route); self.state = State.STOPPED
         controlled = re.fullmatch(r"([A-Z][A-Z0-9_]*)=STOP", str(error))
         if controlled:
@@ -1811,8 +2340,8 @@ class DeploymentEngine:
         if expected_index >= len(Route) or list(Route)[expected_index] is not route:
             raise BuilderStop("ROUTE_ORDER_INVALID=STOP")
         previous = self._previous(route)
-        if previous and self.route_verdict(previous[-1]) is not Verdict.PASS:
-            raise BuilderStop("PREVIOUS_ROUTE_NOT_FORMALLY_ACCEPTED=STOP")
+        if previous and not self.can_advance(previous[-1]):
+            raise BuilderStop("PREVIOUS_ROUTE_NOT_SERVER_ACCEPTED=STOP" if self.server_only else "PREVIOUS_ROUTE_NOT_FORMALLY_ACCEPTED=STOP")
         self.ledger.reset_route_evidence(route)
         self.ledger.failed_routes.discard(route.value)
         self.state = {Route.I: State.I_APPLYING, Route.II: State.II_APPLYING, Route.III: State.III_APPLYING}[route]
@@ -1867,9 +2396,12 @@ class DeploymentEngine:
             self.executor.rollback(route)
         except Exception as exc:
             self.state = State.STOPPED; self._persist(route); raise BuilderStop("ROLLBACK_VERIFICATION_FAIL=STOP") from exc
+        self._verify_rollback_regression(route)
         self.materials.pop(route, None); self.state = State.STOPPED; self._persist(route if failed else None)
 
     def accept_route(self, route: Route) -> None:
+        if self.server_only:
+            raise BuilderStop("FORMAL_ACCEPTANCE_MODE_REQUIRED=STOP")
         if route in self.accepted:
             return
         if route not in self.materials:
@@ -1883,11 +2415,43 @@ class DeploymentEngine:
         self.accepted.append(route); self.ledger.failed_routes.discard(route.value)
         self.state = {Route.I: State.I_PASS, Route.II: State.II_PASS, Route.III: State.III_PASS}[route]; self._persist()
 
+    def accept_server_stage(self, route: Route) -> None:
+        if not self.server_only:
+            raise BuilderStop("SERVER_ONLY_MODE_REQUIRED=STOP")
+        if route in self.accepted:
+            return
+        if route not in self.materials or not self.ledger.server_stage_pass(route):
+            raise BuilderStop("SERVER_STAGE_EVIDENCE_INCOMPLETE=STOP")
+        try:
+            self.executor.checkpoint(self.run_id, route)
+        except Exception as exc:
+            self.materials.pop(route, None); self._fail(route, exc)
+        self.accepted.append(route); self.ledger.failed_routes.discard(route.value)
+        self.state = {Route.I: State.I_PASS, Route.II: State.II_PASS, Route.III: State.III_PASS}[route]
+        self._persist()
+
     def route_verdict(self, route: Route) -> Verdict:
         return self.ledger.route_verdict(route)
 
     def can_advance(self, route: Route) -> bool:
-        return route in self.accepted and self.route_verdict(route) is Verdict.PASS
+        if route not in self.accepted:
+            return False
+        return self.ledger.server_stage_pass(route) if self.server_only else self.route_verdict(route) is Verdict.PASS
+
+    def finalize_server_only(self) -> Verdict:
+        if not self.server_only or len(self.accepted) != 3:
+            raise BuilderStop("SERVER_STAGE_FINALIZE_INVALID=STOP")
+        if not all(self.ledger.server_stage_pass(route) for route in Route):
+            raise BuilderStop("SERVER_STAGE_EVIDENCE_INCOMPLETE=STOP")
+        for route in Route:
+            if not self.verifier.verify(route, self.materials[route], rounds=3):
+                raise BuilderStop(f"FINAL_REGRESSION_{route.value}_FAIL=STOP")
+        self.state = State.FINAL_REGRESSION_PASS
+        write_client_bundle(self.bundle_dir, self.host, self.ports, self.runtime, self.materials)
+        self.state = State.CLIENT_BUNDLE_READY
+        self.executor.finalize()
+        self._persist()
+        return Verdict.PARTIAL
 
     def finalize(self) -> Verdict:
         if len(self.accepted) != 3: raise BuilderStop("FINALIZE_ROUTES_INCOMPLETE=STOP")
@@ -1922,13 +2486,25 @@ def perform_target_inputs(args: argparse.Namespace) -> tuple[str, str, str, int,
     return name, slug, validate_host(host), port, validate_user(user), validate_fingerprint(fingerprint), known
 
 
-def preflight_session(name: str, slug: str, host: str, port: int, user: str, fingerprint: str, session: RemoteSession, *, resume: PersistentState | None = None) -> PreflightContext:
+def validated_identity_file(value: Path | None) -> Path | None:
+    if value is None:
+        return None
+    path = value.expanduser().resolve()
+    if path.is_relative_to(Path(__file__).resolve().parents[1]) or not path.is_file():
+        raise BuilderStop("SSH_IDENTITY_FILE_INVALID=STOP")
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise BuilderStop("SSH_IDENTITY_FILE_PERMISSIONS=STOP")
+    return path
+
+
+def preflight_session(name: str, slug: str, host: str, port: int, user: str, fingerprint: str, session: RemoteSession, *, resume: PersistentState | None = None, requested_ports: Ports | None = None) -> PreflightContext:
     inv = remote_inventory(session)
     if resume is None:
-        checks = assert_inventory(inv, require_clean=True); ports = select_ports(inv)
+        checks = assert_inventory(inv, require_clean=True); ports = select_ports(inv, requested_ports)
     else:
         binding = target_binding(host, user, port, fingerprint)
         if not secrets.compare_digest(binding, resume.target_binding): raise BuilderStop("RESUME_TARGET_MISMATCH=STOP")
+        if requested_ports is not None and requested_ports != resume.ports: raise BuilderStop("RESUME_PORTS_MISMATCH=STOP")
         checks = assert_inventory(inv, require_clean=False); ports = resume.ports
         proc = subprocess.run(_ssh_base(session) + ["bash", "-s"], input=resume_probe_script(resume), text=True, capture_output=True, timeout=45)
         if proc.returncode or "RESUME_PROBE=PASS" not in proc.stdout.splitlines(): raise BuilderStop("RESUME_REMOTE_STATE_MISMATCH=STOP")
@@ -1937,9 +2513,9 @@ def preflight_session(name: str, slug: str, host: str, port: int, user: str, fin
 
 def run_preflight(args: argparse.Namespace) -> int:
     if not all(local_prerequisites().values()): raise BuilderStop("LOCAL_PREREQUISITES=FAIL")
-    name,slug,host,port,user,fp,known=perform_target_inputs(args); base=RemoteSession(host,user,port,known)
+    name,slug,host,port,user,fp,known=perform_target_inputs(args); base=RemoteSession(host,user,port,known,identity_file=validated_identity_file(args.identity_file))
     with SSHControlMaster(base, slug) as session:
-        context=preflight_session(name,slug,host,port,user,fp,session)
+        context=preflight_session(name,slug,host,port,user,fp,session,requested_ports=parse_requested_ports(args.route_ports))
     report=public_report({"builder_version":BUILDER_VERSION,"phase":"PRECHECK","host_key_match":True,**context.checks,"route_i":"NOT_STARTED","route_ii":"NOT_STARTED","route_iii":"NOT_STARTED","regression":"NOT_STARTED","client_bundle":"NOT_READY","formal_acceptance":"NOT_STARTED","verdict":"PREFLIGHT_PASS","error":None})
     for k,v in report.items():
         if v is not None: print(f"{k.upper()}={v}")
@@ -1992,52 +2568,109 @@ def run_deployment_after_gate(args: argparse.Namespace) -> int:
     switching, and leak-oriented DNS acceptance. No route-by-route server
     configuration is delegated to the human.
     """
+    paired = args.loopback_on_failure
+    saved_source: Path | None = None
+    if paired:
+        if not args.diagnostic_route_i or not args.server_only or not args.profile_name or not args.saved_run_id or args.trust_current_host_key or args.identity_file is None:
+            raise BuilderStop('PAIRED_ROUTE_I_SCOPE_INVALID=STOP')
+        if not re.fullmatch(r'[0-9a-f]{32}',args.saved_run_id): raise BuilderStop('PAIRED_SOURCE_RUN_INVALID=STOP')
+        private = private_root()/slugify(args.profile_name)
+        if private.resolve().is_relative_to(Path(__file__).resolve().parents[1]): raise BuilderStop('PAIRED_PRIVATE_ROOT_INVALID=STOP')
+        saved_source = private/'verify'/args.saved_run_id
+        for path in (saved_source/'verify-I-1-1.server.json',saved_source/'verify-I-1-1.json',private/'known_hosts'):
+            if not path.is_file() or path.is_symlink() or stat.S_IMODE(path.stat().st_mode)&0o077:
+                raise BuilderStop('PAIRED_SOURCE_PERMISSIONS=STOP')
+        observed = subprocess.run(['ssh-keygen','-lf',str(private/'known_hosts')],capture_output=True,text=True,timeout=8)
+        lines = observed.stdout.splitlines()
+        if observed.returncode or len(lines)!=1 or 'ED25519' not in lines[0]: raise BuilderStop('PAIRED_PIN_INVALID=STOP')
+        pinned = validate_fingerprint(lines[0].split()[1])
+        if args.host_fingerprint and not secrets.compare_digest(pinned,validate_fingerprint(args.host_fingerprint)): raise BuilderStop('HOST_KEY_MISMATCH=STOP')
+        args.host_fingerprint = pinned
+    elif args.saved_run_id:
+        raise BuilderStop('SAVED_PAIR_REQUIRES_PAIRED_MODE=STOP')
     if not all(local_prerequisites().values()):
         raise BuilderStop("LOCAL_PREREQUISITES=FAIL")
+    if args.diagnostic_route_i and not args.server_only:
+        raise BuilderStop("ROUTE_I_DIAGNOSTIC_REQUIRES_SERVER_ONLY=STOP")
+    if args.diagnostic_route_i:
+        require_route_i_crypto()
     name, slug, host, port, user, fp, known = perform_target_inputs(args)
-    base = RemoteSession(host, user, port, known)
+    base = RemoteSession(host, user, port, known, identity_file=validated_identity_file(args.identity_file))
     state_path = state_root() / slug / "state.json"
     existing: PersistentState | None = None
+    previous_failed_i: PersistentState | None = None
     if state_path.exists():
         existing = load_state(state_path)
+        if existing.acceptance_mode != ("server_only" if args.server_only else "formal"):
+            raise BuilderStop("RESUME_ACCEPTANCE_MODE_MISMATCH=STOP")
         if existing.accepted_routes == ("I", "II", "III") and existing.ledger.final_verdict() is Verdict.PASS:
             raise BuilderStop("COMPLETED_RUN_REUSE_FORBIDDEN=STOP")
-        if not existing.accepted_routes and existing.last_failed_route == "I":
+        if args.diagnostic_route_i:
+            if existing.accepted_routes or existing.last_failed_route != "I":
+                raise BuilderStop("ROUTE_I_DIAGNOSTIC_REQUIRES_FAILED_CLEAN_STATE=STOP")
+            previous_failed_i, existing = existing, None
+        elif not existing.accepted_routes and existing.last_failed_route == "I":
             # Route I rollback restores the clean-room server; that failed run
             # cannot be resumed because the remote owner marker is gone.
             raise BuilderStop("FAILED_I_REQUIRES_NEW_CLEAN_RUN_STATE=STOP")
 
+    diagnostic_artifacts: Mapping[str, Path] | None = None
+    if paired and (previous_failed_i is None or previous_failed_i.run_id != args.saved_run_id or previous_failed_i.target_binding != target_binding(host,user,port,fp)):
+        raise BuilderStop('PAIRED_SOURCE_TARGET_STATE_MISMATCH=STOP')
     with SSHControlMaster(base, slug) as session:
         if existing is None:
-            context = preflight_session(name, slug, host, port, user, fp, session)
-            cover = validate_cover_hostname(getpass.getpass("REALITY cover hostname (private): ").strip())
+            context = preflight_session(name, slug, host, port, user, fp, session, requested_ports=parse_requested_ports(args.route_ports))
+            if previous_failed_i is None:
+                cover = validate_cover_hostname(getpass.getpass("REALITY cover hostname (private): ").strip())
+            else:
+                cover = _load_runtime(context.private_dir, name).cover_hostname
             remote_cover_probe(session, cover)
             runtime = RuntimePrivateInput(name, cover)
-            write_private(context.private_dir / "runtime.json", json.dumps({"cover_hostname": cover}) + "\n")
+            if paired:
+                source_server = json.loads((saved_source/'verify-I-1-1.server.json').read_text())
+                source_client = json.loads((saved_source/'verify-I-1-1.json').read_text())
+                stream = source_server['inbounds'][0]['streamSettings']['realitySettings']
+                if source_server['inbounds'][0]['port'] != context.ports.route_i_tcp or stream['target'] != cover+':443' or cover not in stream['serverNames']:
+                    raise BuilderStop('PAIRED_RUNTIME_PRESERVATION_FAIL=STOP')
+                if source_client['outbounds'][0]['streamSettings']['realitySettings']['serverName'] != cover:
+                    raise BuilderStop('PAIRED_RUNTIME_PRESERVATION_FAIL=STOP')
+            if args.diagnostic_route_i:
+                diagnostic_artifacts = prepare_artifacts(cache_root() / slug)
+            if previous_failed_i is not None:
+                archive = state_path.with_name(f"state.failed-{previous_failed_i.run_id}.json")
+                if archive.exists():
+                    raise BuilderStop("FAILED_STATE_ARCHIVE_EXISTS=STOP")
+                os.replace(state_path, archive)
+            else:
+                write_private(context.private_dir / "runtime.json", json.dumps({"cover_hostname": cover}) + "\n")
             state = PersistentState(
                 BUILDER_VERSION, secrets.token_hex(16), context.target_binding, (),
                 context.ports, AcceptanceLedger(), None,
+                "server_only" if args.server_only else "formal",
             )
             save_state(state_path, state)
         else:
-            context = preflight_session(name, slug, host, port, user, fp, session, resume=existing)
+            context = preflight_session(name, slug, host, port, user, fp, session, resume=existing, requested_ports=parse_requested_ports(args.route_ports))
             runtime = _load_runtime(context.private_dir, name)
             state = existing
 
-        artifacts = prepare_artifacts(cache_root() / slug)
+        artifacts = diagnostic_artifacts if diagnostic_artifacts is not None else prepare_artifacts(cache_root() / slug)
         material_routes = list(state.accepted_routes)
         pending = state.pending_route()
         if pending is not None:
             material_routes.append(pending.value)
         accepted_materials = load_materials(context.private_dir, material_routes)
-        executor = SSHStageExecutor(session, context.ports, runtime, artifacts, context.private_dir)
-        verifier = LocalClientVerifier(host, context.ports, runtime, context.inventory.egress_ip, artifacts, context.private_dir / "verify")
+        diagnostic_run_id = state.run_id if args.diagnostic_route_i else None
+        executor = SSHStageExecutor(session, context.ports, runtime, artifacts, context.private_dir, diagnostic_run_id=diagnostic_run_id, saved_route_i=saved_source, paired_control=paired)
+        verify_dir = context.private_dir / "verify" / state.run_id if args.diagnostic_route_i else context.private_dir / "verify"
+        verifier = LocalClientVerifier(host, context.ports, runtime, context.inventory.egress_ip, artifacts, verify_dir, verify_external_tcp=True, preserve_logs=args.diagnostic_route_i, route_i_snapshot=executor.snapshot_route_i_config if args.diagnostic_route_i else None, route_i_template=saved_source/'verify-I-1-1.json' if paired else None)
 
         def persist(accepted: tuple[str, ...], ledger: AcceptanceLedger, failed: Route | None) -> None:
             nonlocal state
             state = PersistentState(
                 BUILDER_VERSION, state.run_id, context.target_binding, accepted,
                 context.ports, ledger, None if failed is None else failed.value,
+                state.acceptance_mode,
             )
             save_state(state_path, state)
 
@@ -2045,9 +2678,50 @@ def run_deployment_after_gate(args: argparse.Namespace) -> int:
             executor, verifier, context.private_dir / "client-bundle", host,
             context.ports, runtime, state.run_id, state.ledger,
             accepted_materials=accepted_materials, accepted_routes=[Route(value) for value in state.accepted_routes], on_state=persist,
+            server_only=args.server_only,
+            failure_diagnostic=(lambda route,error: executor.paired_failure_control(route,error,verifier)) if paired else None,
         )
         if existing is None:
             engine.initialize()
+        if args.diagnostic_route_i:
+            engine.build_route(Route.I, NetworkClass.OPERATOR)
+            try:
+                if not executor.capture_diagnostics(Route.I):
+                    raise BuilderStop("ROUTE_I_DIAGNOSTIC_NOT_SAVED=STOP")
+            except Exception as exc:
+                engine.abandon_pending(Route.I, failed=True)
+                raise BuilderStop("ROUTE_I_DIAGNOSTIC_CAPTURE_FAIL=STOP") from exc
+            print("DIAGNOSTIC_CAPTURE_I=SAVED")
+            engine.accept_server_stage(Route.I)
+            report = public_report({
+                "builder_version": BUILDER_VERSION, "phase": "ROUTE_I_DIAGNOSTIC", "host_key_match": True,
+                **context.checks,
+                "route_i": "SERVER_STAGE_PASS", "route_ii": "NOT_STARTED", "route_iii": "NOT_STARTED",
+                "regression": "NOT_STARTED", "client_bundle": "NOT_READY",
+                "formal_acceptance": "CLIENT_TEST_PENDING", "verdict": Verdict.PARTIAL.value, "error": None,
+            })
+            for key, value in report.items():
+                if value is not None:
+                    print(f"{key.upper()}={value}")
+            return 0
+        if args.server_only:
+            for route in Route:
+                if route not in engine.materials:
+                    engine.build_route(route, NetworkClass.OPERATOR)
+                if route not in engine.accepted:
+                    engine.accept_server_stage(route)
+            formal = engine.finalize_server_only()
+            report = public_report({
+                "builder_version": BUILDER_VERSION, "phase": "SERVER_STAGE_FINAL", "host_key_match": True,
+                **context.checks,
+                "route_i": "SERVER_STAGE_PASS", "route_ii": "SERVER_STAGE_PASS", "route_iii": "SERVER_STAGE_PASS",
+                "regression": "SERVER_STAGE_PASS", "client_bundle": "READY_PRIVATE",
+                "formal_acceptance": "CLIENT_TEST_PENDING", "verdict": formal.value, "error": None,
+            })
+            for key, value in report.items():
+                if value is not None:
+                    print(f"{key.upper()}={value}")
+            return 0
         current_network: NetworkClass | None = None
 
         def ensure_network(target: NetworkClass) -> NetworkClass:
@@ -2123,28 +2797,279 @@ def run_deployment_after_gate(args: argparse.Namespace) -> int:
 
 
 def render_check() -> int:
+    compile(SAVED_LOOPBACK_AGENT, '<saved-loopback-agent>', 'exec')
+    compile(SSHStageExecutor.route_i_process_program(), '<route-i-process-diagnostic>', 'exec')
     i=RouteMaterial(Route.I,uuid="123e4567-e89b-12d3-a456-426614174000",public_key="A"*43,short_id="aabbccddeeff0011")
     ii=RouteMaterial(Route.II,uuid="123e4567-e89b-12d3-a456-426614174001",public_key="B"*43,short_id="1122334455667788",xhttp_path="/0123456789abcdef")
     iii=RouteMaterial(Route.III,auth="a"*64,pin_sha256="b"*64)
     render_xray_server_config(Route.I,23451,i,"cover.example","C"*43); render_xray_server_config(Route.II,23452,ii,"cover.example","D"*43)
     render_xray_client_config(Route.I,"192.0.2.10",23451,i,"cover.example",10808); render_xray_client_config(Route.II,"192.0.2.10",23452,ii,"cover.example",10808)
     render_hysteria_server_config(23453,iii.auth or "","/tmp/cert","/tmp/key"); render_hysteria_client_config("192.0.2.10",23453,iii,10808)
-    if shutil.which("bash"):
-        state=PersistentState(BUILDER_VERSION,"a"*32,"b"*64,("I",),Ports(23451,23452,23453),AcceptanceLedger())
-        scripts=[stage_i_apply_script(23451),stage_ii_apply_script(23452),stage_iii_apply_script(23453),server_action_script(Route.I,23451,"restart"),server_action_script(Route.II,23452,"stop"),rollback_script(Route.III,23453),owner_initialize_script("a"*32,Ports(23451,23452,23453)),owner_checkpoint_script("a"*32,Route.I),resume_probe_script(state),finalize_remote_script()]
-        for script in scripts:
-            proc=subprocess.run(["bash","-n"],input=script,text=True,capture_output=True)
+    state=PersistentState(BUILDER_VERSION,"a"*32,"b"*64,("I",),Ports(23451,23452,23453),AcceptanceLedger())
+    scripts=[stage_i_apply_script(23451),stage_i_apply_script(443, diagnostic=True),stage_i_apply_script(443, diagnostic=True, saved_pair=True),stage_ii_apply_script(23452),stage_iii_apply_script(23453),server_action_script(Route.I,23451,"restart"),server_action_script(Route.II,23452,"stop"),rollback_script(Route.III,23453),owner_initialize_script("a"*32,Ports(23451,23452,23453)),owner_checkpoint_script("a"*32,Route.I),resume_probe_script(state),finalize_remote_script()]
+    for script in scripts:
+        for match in re.finditer(r"python3[^\n]*<<'(?P<tag>[^']+)'[^\n]*\n(?P<body>.*?)\n(?P=tag)", script, re.DOTALL):
+            compile(match.group("body"), f"<generated:{match.group('tag')}>", "exec")
+        if shutil.which("bash"):
+            proc=subprocess.run(["bash","-n"],input=script,text=True,capture_output=True,timeout=10)
             if proc.returncode: print("RENDER_CHECK=FAIL"); return 2
     print("RENDER_CHECK=PASS"); return 0
+
+
+SAVED_LOOPBACK_AGENT = r'''import hashlib, json, os, pathlib, platform, signal, socket, subprocess, sys, time, zipfile
+os.umask(0o077)
+p = pathlib.Path(__file__).resolve().parent
+def write(name, value):
+    (p/name).write_text(json.dumps(value)); (p/name).chmod(0o600)
+def free_port():
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0)); return s.getsockname()[1]
+def listening(port):
+    return any(q.split()[1] == '0100007F:'+format(port, '04X') and q.split()[3] == '0A'
+               for q in pathlib.Path('/proc/net/tcp').read_text().splitlines()[1:])
+def identity():
+    pid = int(subprocess.check_output(['systemctl','show','pp-lab-i.service','-p','MainPID','--value'],text=True).strip())
+    if pid <= 0: raise RuntimeError()
+    proc = pathlib.Path('/proc')/str(pid)
+    return {'pid':pid, 'start_ticks':proc.joinpath('stat').read_text().rsplit(')',1)[1].split()[19],
+            'boot_id':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+            'binary_sha256':hashlib.sha256(proc.joinpath('exe').read_bytes()).hexdigest(),
+            'config_sha256':hashlib.sha256(pathlib.Path('/etc/privatpirat/pp-lab-i/config.json').read_bytes()).hexdigest()}
+if sys.argv[1] == 'prepare-live':
+    server_raw = pathlib.Path('/etc/privatpirat/pp-lab-i/config.json').read_bytes()
+    (p/'server.json').write_bytes(server_raw)
+    server = json.loads(server_raw); client = json.loads((p/'source.client.json').read_text())
+    client['inbounds'][0].update(listen='127.0.0.1',port=free_port())
+    peer, = [o for o in client['outbounds'] if o['protocol']=='vless']
+    peer['settings']['vnext'][0].update(address='127.0.0.1',port=server['inbounds'][0]['port'])
+    write('client.json',client)
+    os.symlink(sys.argv[2],p/'xray')
+    r=subprocess.run([str(p/'xray'),'run','-test','-c',str(p/'client.json')],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=8)
+    (p/'client.config-test.log').write_bytes(r.stdout)
+    if r.returncode: raise SystemExit(2)
+    print('LIVE_CLIENT_PREPARE=PASS'); raise SystemExit(0)
+if sys.argv[1] == 'prepare':
+    archive = p/'Xray-linux-64.zip'
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != sys.argv[2]: raise SystemExit(2)
+    with zipfile.ZipFile(archive) as z: (p/'xray').write_bytes(z.read('xray'))
+    (p/'xray').chmod(0o700)
+    server = json.loads((p/'source.server.json').read_text())
+    client = json.loads((p/'source.client.json').read_text())
+    server_port, socks_port = free_port(), free_port()
+    if server_port == socks_port: raise SystemExit(2)
+    server['inbounds'][0].update(listen='127.0.0.1', port=server_port)
+    client['inbounds'][0].update(listen='127.0.0.1', port=socks_port)
+    peer, = [o for o in client['outbounds'] if o['protocol'] == 'vless']
+    peer['settings']['vnext'][0].update(address='127.0.0.1', port=server_port)
+    write('server.json', server); write('client.json', client)
+    for name in ('server', 'client'):
+        r = subprocess.run([str(p/'xray'), 'run', '-test', '-c', str(p/(name+'.json'))],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=8)
+        (p/(name+'.config-test.log')).write_bytes(r.stdout)
+        if r.returncode: raise SystemExit(2)
+    print('LOOPBACK_PREPARE=PASS'); raise SystemExit(0)
+procs, handles = [], []
+start = time.monotonic(); result = {'error': None}
+live = sys.argv[1] == 'live-client'
+def stop_signal(signum, frame): raise TimeoutError()
+signal.signal(signal.SIGTERM, stop_signal); signal.signal(signal.SIGINT, stop_signal); signal.signal(signal.SIGHUP, stop_signal)
+def request(label, socks):
+    cmd = ['curl', '--silent', '--show-error', '--max-time', '20', '--output', str(p/(label+'.body')),
+           '--write-out', '%{http_code}']
+    cmd += ['--socks5-hostname', '127.0.0.1:'+str(socks)] if socks else ['--noproxy', '*']
+    cmd.append(json.loads((p/'control.json').read_text())['url'] if live else 'http://example.com/')
+    t = time.monotonic()
+    with (p/(label+'.stderr')).open('wb') as err, (p/(label+'.status')).open('wb') as out:
+        child = subprocess.Popen(cmd, stdout=out, stderr=err); procs.append(child)
+        code = child.wait(timeout=25)
+    status = (p/(label+'.status')).read_text()
+    size = (p/(label+'.body')).stat().st_size if (p/(label+'.body')).exists() else 0
+    return {'curl_exit': code, 'http_status': status, 'body_nonempty': size > 0,
+            'elapsed_seconds': round(time.monotonic()-t, 3), 'ok': code == 0 and status == '200' and size > 0}
+try:
+    server = json.loads((p/'server.json').read_text()); client = json.loads((p/'client.json').read_text())
+    if live:
+        expected = json.loads((p/'control.json').read_text())['identity']
+        result['server_identity_before'] = identity()
+        if result['server_identity_before'] != expected: raise RuntimeError()
+        result['request_started_epoch'] = time.time()
+        result['platform'] = '/'.join((platform.system(),platform.release(),platform.machine()))
+        result['client_uid'] = os.getuid()
+        result['proxy_environment_present'] = {name:bool(os.environ.get(name)) for name in ('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY')}
+    result['request_start_seconds'] = None
+    for role, cfg in ([('client', client)] if live else [('server', server), ('client', client)]):
+        inbound, = cfg['inbounds']; port = inbound['port']
+        if inbound['listen'] != '127.0.0.1' or port <= 1024: raise ValueError()
+        with socket.socket() as sock: sock.bind(('127.0.0.1', port))
+        f = (p/(role+'.log')).open('wb'); handles.append(f)
+        child = subprocess.Popen([str(p/'xray'), 'run', '-c', str(p/(role+'.json'))], stdout=f, stderr=subprocess.STDOUT)
+        procs.append(child); deadline = time.monotonic()+8
+        while not listening(port):
+            if child.poll() is not None or time.monotonic() > deadline: raise RuntimeError()
+            time.sleep(.05)
+    result['request_start_seconds'] = round(time.monotonic()-start, 3)
+    result['loopback_http'] = request('loopback', client['inbounds'][0]['port'])
+    # The sole distinguishing control after an expected data-path failure.
+    if not live and not result['loopback_http']['ok']: result['direct_http'] = request('direct', None)
+    if live:
+        result['request_ended_epoch'] = time.time()
+        result['server_identity_after'] = identity()
+        if result['server_identity_after'] != expected: raise RuntimeError()
+except Exception as exc:
+    result['error'] = type(exc).__name__
+finally:
+    for child in procs:
+        if child.poll() is None: child.terminate()
+    deadline = time.monotonic()+2
+    for child in procs:
+        if child.poll() is None:
+            try: child.wait(timeout=max(.01, deadline-time.monotonic()))
+            except subprocess.TimeoutExpired: child.kill()
+    for child in procs:
+        if child.poll() is None: child.wait(timeout=1)
+    for f in handles: f.close()
+    result['processes_remaining'] = sum(c.poll() is None for c in procs)
+    result['listeners_remaining'] = sum(listening(c['inbounds'][0]['port']) for c in ([client] if live else [server, client]))
+    result['elapsed_seconds'] = round(time.monotonic()-start, 3)
+    result['saved_files'] = [name for name in ('server.log','client.log','loopback.stderr','loopback.status','loopback.body','direct.stderr','direct.status','direct.body','server.config-test.log','client.config-test.log') if (p/name).exists()]
+    write('result.json', result)
+print('LOOPBACK_FINISHED=SAVED')
+'''
+
+
+def saved_loopback_pair(server_text: str, client_text: str, actual_server: str, actual_client: str) -> dict[str, str]:
+    """Require exact preservation except the three necessary loopback endpoints."""
+    source_server, source_client = json.loads(server_text), json.loads(client_text)
+    server, client = json.loads(actual_server), json.loads(actual_client)
+    port = server['inbounds'][0]['port']
+    socks = client['inbounds'][0]['port']
+    if any(len(cfg['inbounds']) != 1 for cfg in (server, client)) or port == socks or not all(1024 < x < 65536 for x in (port, socks)):
+        raise BuilderStop('LOOPBACK_ENDPOINTS_INVALID=STOP')
+    source_server['inbounds'][0].update(listen='127.0.0.1', port=port)
+    source_client['inbounds'][0].update(listen='127.0.0.1', port=socks)
+    peer, = [o for o in source_client['outbounds'] if o['protocol'] == 'vless']
+    peer['settings']['vnext'][0].update(address='127.0.0.1', port=port)
+    if source_server != server or source_client != client:
+        raise BuilderStop('LOOPBACK_CONFIG_PRESERVATION_FAIL=STOP')
+    result = compare_route_i_configs(actual_server, actual_client, '127.0.0.1', port)
+    if any(value != 'MATCH' for value in result.values()):
+        raise BuilderStop('LOOPBACK_CONFIG_PAIR_MISMATCH=STOP')
+    return result
+
+
+def run_saved_vps_loopback_after_gate(args: argparse.Namespace) -> int:
+    """One fresh R3 diagnostic, never deployment/acceptance or state replacement."""
+    if not args.server_only or args.diagnostic_route_i or args.trust_current_host_key or args.route_ports or args.loopback_on_failure:
+        raise BuilderStop('LOOPBACK_SCOPE_INVALID=STOP')
+    if not all((args.profile_name, args.target_host, args.ssh_user, args.ssh_port, args.identity_file, args.saved_run_id)):
+        raise BuilderStop('LOOPBACK_EXPLICIT_TARGET_REQUIRED=STOP')
+    if not re.fullmatch(r'[0-9a-f]{32}', args.saved_run_id):
+        raise BuilderStop('LOOPBACK_SOURCE_RUN_INVALID=STOP')
+    slug = slugify(args.profile_name); private = private_root()/slug
+    if private.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+        raise BuilderStop('LOOPBACK_PRIVATE_ROOT_IN_REPOSITORY=STOP')
+    previous = load_state(state_root()/slug/'state.json')
+    if previous.run_id != args.saved_run_id or previous.accepted_routes or previous.last_failed_route != 'I':
+        raise BuilderStop('LOOPBACK_FAILED_I_STATE_REQUIRED=STOP')
+    known = private/'known_hosts'
+    fp = subprocess.run(['ssh-keygen', '-lf', str(known)], text=True, capture_output=True, timeout=8)
+    lines = fp.stdout.splitlines()
+    if fp.returncode or len(lines) != 1 or 'ED25519' not in lines[0]:
+        raise BuilderStop('LOOPBACK_PIN_INVALID=STOP')
+    fingerprint = validate_fingerprint(lines[0].split()[1])
+    if args.host_fingerprint and not secrets.compare_digest(validate_fingerprint(args.host_fingerprint), fingerprint):
+        raise BuilderStop('HOST_KEY_MISMATCH=STOP')
+    binding = target_binding(args.target_host, args.ssh_user, args.ssh_port, fingerprint)
+    if not secrets.compare_digest(binding, previous.target_binding):
+        raise BuilderStop('LOOPBACK_TARGET_BINDING_MISMATCH=STOP')
+    source = private/'verify'/args.saved_run_id
+    server_src, client_src = source/'verify-I-1-1.server.json', source/'verify-I-1-1.json'
+    for path in (server_src, client_src, known):
+        if not path.is_file() or path.is_symlink() or stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise BuilderStop('LOOPBACK_SOURCE_PERMISSIONS=STOP')
+    archive = cache_root()/slug/ARTIFACTS['xray-linux-amd64'].name
+    if not archive.is_file() or not verify_sha256(archive, ARTIFACTS['xray-linux-amd64'].sha256):
+        raise BuilderStop('LOOPBACK_CACHED_XRAY_REQUIRED=STOP')
+    require_route_i_crypto()
+    run_id = secrets.token_hex(16); directory = private/'diagnostics'/run_id
+    ensure_private_dir(directory)
+    write_private(directory/'agent.py', SAVED_LOOPBACK_AGENT)
+    write_private(directory/'source.server.json', server_src.read_text())
+    write_private(directory/'source.client.json', client_src.read_text())
+    base = RemoteSession(validate_host(args.target_host), validate_user(args.ssh_user), args.ssh_port, known, identity_file=validated_identity_file(args.identity_file))
+    remote = '/tmp/pp-lab-loopback-'+run_id
+    with SSHControlMaster(base, slug) as session:
+        preflight_session(args.profile_name, slug, base.host, base.port, base.user, fingerprint, session, requested_ports=previous.ports)
+        executor = SSHStageExecutor(session, previous.ports, _load_runtime(private, args.profile_name), {}, private)
+        executor._run(f'set -eu\ncommand -v timeout >/dev/null\ncommand -v curl >/dev/null\ntest ! -e {remote}\numask 077\nmkdir -m 700 {remote}\nprintf "LOOPBACK_DIR=PASS\\n"\n', 'LOOPBACK_DIR=PASS')
+        collected = False
+        try:
+            for name, path in [('agent.py', directory/'agent.py'), ('source.server.json', server_src), ('source.client.json', client_src), (archive.name, archive)]:
+                executor._scp_to(path, remote+'/'+name)
+            executor._run(f'python3 {remote}/agent.py prepare {ARTIFACTS["xray-linux-amd64"].sha256}\n', 'LOOPBACK_PREPARE=PASS', timeout=30)
+            for name in ('server.json', 'client.json'):
+                executor._scp_from(remote+'/'+name, directory/name)
+            comparison = saved_loopback_pair(server_src.read_text(), client_src.read_text(), (directory/'server.json').read_text(), (directory/'client.json').read_text())
+            write_private(directory/'comparison.json', json.dumps(comparison))
+            executor._run(f'timeout --signal=TERM --kill-after=5s 60s python3 {remote}/agent.py run\n', 'LOOPBACK_FINISHED=SAVED', timeout=75)
+            executor._scp_from(remote+'/result.json', directory/'result.json')
+            result = json.loads((directory/'result.json').read_text())
+            allowed = {'server.log','client.log','loopback.stderr','loopback.status','loopback.body','direct.stderr','direct.status','direct.body','server.config-test.log','client.config-test.log'}
+            if not isinstance(result.get('saved_files'), list) or set(result['saved_files']) - allowed:
+                raise BuilderStop('LOOPBACK_DIAGNOSTIC_MANIFEST_INVALID=STOP')
+            for name in result['saved_files']:
+                executor._scp_from(remote+'/'+name, directory/name)
+            server_log = (directory/'server.log').read_text(errors='replace') if (directory/'server.log').exists() else ''
+            client_log = (directory/'client.log').read_text(errors='replace') if (directory/'client.log').exists() else ''
+            write_private(directory/'status-I.json', json.dumps({
+                'server_inbound_request_count': server_log.count('proxy/vless/inbound: received request'),
+                'client_real_certificate_count': client_log.count('received real certificate'),
+                'client_verified': 'NOT_RECORDED' if 'uConn.Verified:' not in client_log else 'RECORDED',
+                'read_client_finished': 'NOT_RECORDED' if 'readClientFinished' not in server_log else 'RECORDED',
+                'server_handshake': 'NOT_RECORDED',
+            }))
+            if result['processes_remaining'] or result['listeners_remaining']:
+                raise BuilderStop('LOOPBACK_CLEANUP_FAIL=STOP')
+            collected = True
+        finally:
+            # Preserve uncollected evidence on failure; never kill unrelated PIDs.
+            cleanup = f'''set -euo pipefail
+python3 - <<'PY'
+import pathlib, shutil
+p=pathlib.Path('{remote}')
+assert p.parent == pathlib.Path('/tmp') and not p.is_symlink()
+for entry in pathlib.Path('/proc').iterdir():
+    if entry.name.isdigit():
+        try: cmd=(entry/'cmdline').read_bytes()
+        except (FileNotFoundError, PermissionError, ProcessLookupError): continue
+        if any((str(p)+'/'+name).encode() in cmd for name in ('server.json','client.json')): raise SystemExit(2)
+if {collected!r}: shutil.rmtree(p)
+PY
+printf 'LOOPBACK_CLEANUP=PASS\\n'
+'''
+            executor._run(cleanup, 'LOOPBACK_CLEANUP=PASS', timeout=10)
+    print('VPS_LOOPBACK_HTTP='+('PASS' if result.get('loopback_http', {}).get('ok') else 'FAIL'))
+    print('DIAGNOSTIC_ONLY=TRUE'); print('FORMAL_ACCEPTANCE=NOT_RUN'); print('LOOPBACK_CLEANUP=PASS')
+    print('DIAGNOSTIC_RUN_ID='+run_id)
+    if result.get('error') or not result.get('loopback_http', {}).get('ok'):
+        raise BuilderStop('VPS_LOOPBACK_DATA_PATH_FAIL=STOP')
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser=argparse.ArgumentParser(prog="pp-build"); mode=parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--local-check",action="store_true"); mode.add_argument("--render-check",action="store_true"); mode.add_argument("--preflight-only",action="store_true"); mode.add_argument("--apply",action="store_true",help="execute reviewed deployment flow after explicit R3-SERVER authorization")
+    mode.add_argument('--diagnostic-vps-loopback', action='store_true', help='fresh R3 only: bounded saved Route I pair on VPS loopback; never deploys routes')
+    parser.add_argument('--saved-run-id', help='protected failed Route I source run, 32 hex characters')
+    parser.add_argument('--loopback-on-failure',action='store_true',help='R3 paired Route I only: one client-only loopback control before rollback of an external failure')
     parser.add_argument("--profile-name")
     parser.add_argument("--target-host",help="owner-approved operational target address")
     parser.add_argument("--ssh-user",help="owner-approved SSH login")
     parser.add_argument("--ssh-port",type=int,metavar="PORT")
+    parser.add_argument("--identity-file",type=Path,help="private SSH key outside the repository, mode 0600")
+    parser.add_argument("--server-only",action="store_true",help="run operator-network server checks; formal mobile acceptance remains pending")
+    parser.add_argument("--diagnostic-route-i",action="store_true",help="one clean Route I server-only run with protected handshake logs; never starts II or III")
+    parser.add_argument("--route-ports",metavar="I_TCP,II_TCP,III_UDP",help="requested route ports; TCP and UDP may use the same number")
     trust=parser.add_mutually_exclusive_group()
     trust.add_argument("--host-fingerprint",help="expected public ED25519 SHA256 fingerprint")
     trust.add_argument("--trust-current-host-key",action="store_true",help="explicit one-run TOFU: pin the currently presented ED25519 key")
@@ -2154,6 +3079,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     os.umask(0o077); args=build_parser().parse_args(argv)
     try:
+        if args.loopback_on_failure and not args.apply:
+            raise BuilderStop('PAIRED_REQUIRES_APPLY=STOP')
         if args.local_check:
             result=local_prerequisites()
             for key in sorted(result): print(f"LOCAL_{key.upper()}={'PASS' if result[key] else 'FAIL'}")
@@ -2161,6 +3088,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.render_check: return render_check()
         if args.apply:
             return run_deployment_after_gate(args)
+        if args.diagnostic_vps_loopback:
+            return run_saved_vps_loopback_after_gate(args)
         return run_preflight(args)
     except BuilderStop as exc:
         print(format_builder_stop(str(exc))); print("VERDICT=STOP"); return 2
