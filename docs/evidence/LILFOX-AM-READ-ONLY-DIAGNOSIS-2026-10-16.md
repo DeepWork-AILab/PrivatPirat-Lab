@@ -1,11 +1,11 @@
 # LilFox Amsterdam — read-only diagnosis и пакет восстановления
 
-`FACT` — утреннее продолжение **AMSTERDAM-G0**: allowlist и dry-run проверены; DNS control plane и durable backup ещё отсутствуют. Текущий write verdict **PARTIAL / STOP**, а не готовность к применению. Актуальный G1/G2 и recovery policy приведены в секции AMSTERDAM-G0 ниже; ночные результаты сохранены как историческое evidence.
+`FACT` — последнее продолжение **AMSTERDAM-G0**, 16 октября, 12:40–12:51 UTC: приватный durable backup трёх HTML создан и независимо проверен; оба frozen manifests прежние. Авторизованная панель подтвердила stale A, DNS only, Auto, пустой comment и IDs аккаунта/зоны. **Остаётся обязательный blocker: record_id и полный API snapshot недоступны через разрешённый контур.** `AMSTERDAM_G0=PARTIAL_STOP`, `EXECUTION_READY=false`, `READY_FOR_ONE_OWNER_DECISION=false`. Итоговые доказательства и уточнения пакета — в секции «Завершение G0»; прежние результаты ниже сохранены с временными границами.
 
 - `FACT` — Evidence ID: `LILFOX-AM-READ-ONLY-2026-10-16`; отчёт обновлён после подключения Desktop Commander.
 - `FACT` — основные сетевые и серверные наблюдения: 15 октября 2026, 21:45–22:14 UTC (16 октября, 00:45–01:14 МСК).
 - `FACT` — исходный main: `8b29c9cff517c0b114a4aee8f6f4745fa94411c3`.
-- `DECISION` — разрешены диагностика и этот документ в отдельной ветке/Draft PR. Изменения VPS/DNS/действующих подписок, SSH trust, deployment и merge не разрешены.
+- `DECISION` — разрешены диагностика, этот документ в рабочей ветке/Draft PR и, по новому поручению, долговечный backup только в существующем приватном операторском WSL-пространстве. Изменения VPS/DNS/действующих подписок, SSH trust, deployment и merge не разрешены.
 - `FACT` — `VPN_RESTORED=NOT_PROVEN`. Есть свежий успешный Windows HTTPS data path I и II, но нет новой Android-матрицы, III client test или formal acceptance.
 
 ## Текущий диагноз
@@ -97,7 +97,9 @@
 
 `FACT` — `BASIC_HTTPS_EXIT=PASS` относится к одному candidate каждого I/II в текущем контуре ноутбука, где management TUN/proxy оставался включён. Нет трёх reconnect repetitions, HTTP acceptance, прямого RF/mobile comparison или restart/isolation tests. Это не formal G2/G3, не 18/18 и не доказательство восстановления Happ. Независимый нативный III client в проверенном каталоге существующего Happ core не найден; установка запрещена, III client test не подменён старой WSL timeout-пробой.
 
-## AMSTERDAM-G0 — актуальный пакет подготовки, 16 октября утром
+## AMSTERDAM-G0 — исторический checkpoint 16 октября утром и проект G1/G2
+
+`FACT` — статусы доступа/backup в этой секции относятся к 06:49–07:01 UTC. Позднее разрешение на приватный backup и результаты авторизованной панели приведены в «Завершение G0»; прежний sign-in blocker больше не актуален.
 
 `FACT` — G0 наблюдения 06:49–07:01 UTC. Main и Draft PR №15 не изменились с предыдущего этапа. Приватный handoff по-прежнему modified 2026-10-14 20:24:55 UTC. Клиентские I/II, полный Caddy delivery и III acceptance повторно не запускались.
 
@@ -215,11 +217,75 @@ content = CURRENT_ADDRESS   # only intended semantic delta
 
 `TODO` — после G1/G2 провести независимый реальный Happ refresh и целевую клиентскую матрицу. При остающемся network failure — один различающий read-only test с source/time/control, затем STOP направления; не менять протоколы, ports, firewall, certificate pins или рабочую маршрутизацию на догадке. III требует отдельного существующего UDP/QUIC-клиента; установки и рестарты по-прежнему запрещены.
 
+## Завершение G0 — 16 октября, 12:40–12:51 UTC
+
+`DECISION` — продолжение от `4b16778a`, без повторного запуска ночной диагностики. Новый scope явно разрешает приватный backup и безопасные тесты. Production writes по-прежнему запрещены. Этот checkpoint уточняет предыдущий, но не превращает частичную подготовку в G0 PASS.
+
+### Авторизованный DNS read: что получено и что блокирует DONE
+
+| Параметр | Actual / происхождение |
+|---|---|
+| Аккаунт/зона | Авторизованная существующая Chrome-сессия; account_id и zone_id прочитаны из видимой панели Overview; точные значения оставлены только в приватном backup snapshot |
+| Целевое имя/type/content | В Records после поиска точного имени одна A-запись, content=OLD_ADDRESS; конфликтующие записи того же имени в показанном результате отсутствуют |
+| Proxy | DNS only; у switch `aria-checked=false`, то есть `proxied=false` |
+| TTL control plane | Видимый selector Auto, связанное DOM-поле имеет value `1`. Это Auto sentinel, не одна секунда |
+| Фактический TTL | Auto для DNS-only = 300 секунд по [Cloudflare TTL reference](https://developers.cloudflare.com/dns/manage-dns-records/reference/ttl/); свежие Google и Cloudflare DoH также вернули OLD_ADDRESS с TTL=300, rcode=0 |
+| Comment | Record Attributes раскрыты read-only; поле пустое |
+| record_id / остальные API business fields | `NOT_READ`: раскрытый record, его DOM attributes/links и Record actions не показывают record_id; полного JSON из API нет |
+| Запись в панель | Не выполнялась: поля записи не заполнялись, Save оставался disabled, раскрытие закрыто Cancel; финальный readback A/DNS only/Auto прежний |
+
+`FACT` — профильный DNS connector среди доступных инструментов не обнаружен. Прежний ограниченный CLI/env check не дал существующего API credential. Дополнительно выполнен ровно один read-only переход браузера к точному same-origin API collection выбранной зоны с фильтром имени: клиент браузера отказал `ERR_BLOCKED_BY_CLIENT`. API-ответ не получен, record_id не установлен. Повторов, обхода блокировки, переноса cookies, чтения токенов, скрытого состояния приложения и создания credentials не было.
+
+`DECISION` — account_id, zone_id и UI component IDs не подменяют record_id. TTL/public DNS не дают API identity. Общий export зоны не выполнялся, чтобы не копировать другие ресурсы. Обычные права авторизованного аккаунта не являются техническим read-only ACL; read-only здесь обеспечен выполненными действиями.
+
+`TODO` — точный оставшийся blocker: безопасный существующий authenticated GET целевой DNS-записи, возвращающий её record_id и все business fields. Достаточен разрешённый профильный API/connector либо официальный read-only UI, показывающий эти параметры. Новые credentials, расширение доступа и обход ограничения клиента не входят в эту миссию. До получения данных действуют `DNS_SNAPSHOT_COMPLETE=false` и STOP G1/G2.
+
+### Durable backup и независимый тест восстановления
+
+`FACT` — в существующем target-specific private operator workspace WSL создан exclusive каталог `amsterdam-g0-backup-20261016T124743Z-85bf25ad`. Абсолютный путь, filenames получателей и URL не публикуются. Каталог не находится в Git/public root/общих источниках. Проверены все parent components: root-owned, без symlink и group/other write; внешний root и target private root 0700.
+
+`FACT` — VPS только читал исходники и собирал archive в RAM. Bytes переданы существующим strict-pinned SSH в RAM операторского WSL и записаны только в разрешённое private backup space. SSH keys, route configs и credentials в архив не копировались. В Git/чат/cloud workspace HTML/архив не передавались. Замены опубликованных файлов, записи backup на VPS и изменения SSH trust отсутствуют.
+
+| Проверка | Actual |
+|---|---|
+| Allowlist | Ровно slots 2/5/6, каждый regular/non-symlink, nlink=1; исходный page digest совпал с frozen guard |
+| Состав | `html-originals.tar.gz`: ровно три regular `page/<original-name>` members; исходные mode/uid/gid/size сохранены в архиве и приватном manifest |
+| Размер | 5 924 601 bytes archive; исходные HTML суммарно 8 122 223 bytes |
+| Archive SHA-256 | `320f2db063ed828fddd5b1ba9b20a8d3d76b2d83205c3ce088629614ecafbd55` |
+| Private manifest SHA-256 | `54c28a3ec33149d49fe8325294d7b03d42f953adb7db1de4d6d06d4b3e25d101` |
+| Доступ и запись | Run/restore-check dirs 0700; archive/manifest/receipts/restore-check files 0600, root-owned, nlink=1; O_EXCL/O_NOFOLLOW, flush+fsync файлов и directories |
+| Полнота и безопасность архива | 3/3 полных hashes и исходные mode/uid/gid/size совпали; absolute/parent traversal paths, symlink/hardlink и лишние members запрещены |
+| Восстановление | Три member прочитаны с диска и явно записаны эксклюзивно в private restore-check files; 3/3 повторных SHA-256 совпали с исходниками; приватные копии оставлены 0600, исходные mode/owner доступны в archive/manifest |
+| Отказоустойчивость проверки | Обрезанная в RAM копия архива отвергнута; повреждённый архив не записывался на диск и не использовался для восстановления |
+| Долговечность относительно процесса | После завершения создающего процесса отдельный новый WSL/SSH process снова прочитал archive/manifest/restore-check с диска; все hashes/permissions/members PASS |
+| DNS observation | Отдельный private JSON содержит только полученные target UI параметры и IDs, без auth headers/cookies/tokens; явно `complete=false`, record_id и прочие API поля null |
+
+`FACT` — `HTML_DURABLE_BACKUP=PASS`, `RESTORE_CHECK=3/3 PASS`. Это постоянная off-VPS копия на операторском диске; она не является независимой копией на втором носителе и не проверялась reboot/disaster test. Digest подтверждает целостность, не шифрует архив: приватные URL внутри HTML требуют сохранения текущих прав доступа. Старые HTML нельзя публиковать обратно без замены legacy authority на owned authority.
+
+### Frozen state и уточнённый исполнительный пакет
+
+`FACT` — до backup и в отдельной последующей strict-pinned SSH-сессии page guard `61a36ceb21976cb1201b14681e9f7c79182302e8067bca2124802085d10bc251` и protected guard `7f517d021fc6189b1b4b47e52c38a18c8c256c599a2a9c89cf841808231f08c1` совпали с эталонами. Шесть subscriptions и четыре configs не изменились. Текущий адрес присутствует на интерфейсе, старый отсутствует. Все четыре units active/running, NRestarts=0; PID совпали с ночным и утренним checkpoint. Это read-only state proof, не новый data-path PASS.
+
+`FACT` — три RAM candidates снова прошли проверку единственного metadata tag: меняется только authority; scheme/port/path/token/query/fragment и все bytes вне tag прежние; обратная substitution восстанавливает оригинал. Candidate SHA-256 и приватная allowlist сохранены в private manifest. Production candidates/staging на VPS не записывались.
+
+`DECISION` — проект G1/G2 и forward-only recovery выше сохраняется со следующими точными уточнениями:
+
+1. `TODO` — сначала закрыть DNS API blocker, добавить полный снимок ровно одной записи в существующий private backup, повторно проверить его и оба frozen guards. Не создавать record_id по догадке и не переходить к write через UI ради обхода gate.
+2. `TODO` — G1: после отдельного разрешения один PATCH проверенного record_id. Исходные `type=A`, exact name, `ttl=1` (Auto) и `proxied=false` сохраняются; единственная целевая semantic delta — content на CURRENT_ADDRESS. Не записывать `ttl=300`: это изменило бы настройку Auto. Перед PATCH свежий GET и сравнение с полным snapshot; при drift STOP. После PATCH GET с проверкой всех protected business fields. Timeout — один GET и STOP при неизвестном outcome, без blind retry.
+3. `TODO` — propagation: по наблюдаемому effective TTL=300 выбрать конечное окно максимум 10 минут, проверки с интервалами до 60 секунд, два resolver обязаны выбрать CURRENT_ADDRESS. Это bounded verification window, не гарантия всех локальных caches. G2 не начинать, если DNS gate не прошёл.
+4. `TODO` — G2: читать private manifest и durable backup, повторно проверять оба guards; эксклюзивный same-FS private stage вне public root. Ровно три candidate, последовательный atomic file replace с no-follow/dirfd, fresh source hash/mode/owner/nlink checks и fsync file/parent. После каждого файла — exact candidate hash receipt/readback; перед следующим — остальные source guards плюс ранее опубликованные receipt hashes. При любой ошибке STOP без чужих overwrite/delete. Это три атомарные file операции, не общая транзакция.
+5. `TODO` — финальный G2 PASS: 6/6 owned metadata, прежний protected digest, полное local TLS/body/hash сравнение всех 12 файлов. Затем отдельный внешний HTTPS и настоящий Happ refresh/клиентская приёмка; прежние результаты I/II не обновлять датой G0. III UDP/QUIC остаётся NOT_TESTED.
+6. `DECISION` — recovery только вперёд: не возвращать OLD_ADDRESS и не публиковать активные legacy links. После подтверждённого G1 safe A сохраняется даже при внешнем HTTPS failure. Повреждённый собственный опубликованный HTML ремонтируется только при receipt hash match, из проверенного backup с повторным применением owned authority. Без успешного безопасного ремонта — STOP; maintenance fallback не включать автоматически, он требует явного включения в будущее разрешение.
+
+`TODO` — риск G1: ошибочная identity записи/конкурентная правка/cache propagation; риск G2: ошибка точечной публикации и частично завершённый набор из трёх файлов. Сохранённые оригиналы и проверенные candidates закрывают HTML recovery, но не заменяют полный DNS snapshot. Нельзя считать этот проект уже проверенным production executable, пока обязательный API read заблокирован.
+
+`DECISION` — итог: `HTML_BACKUP_BLOCKER=CLOSED`, `DNS_LOGIN_BLOCKER=CLOSED`, `DNS_RECORD_ID_AND_FULL_SNAPSHOT_BLOCKER=OPEN`. `AMSTERDAM_G0=PARTIAL_STOP`; G0 PASS и готовность одного production-решения не объявляются. Центральному архитектору нужен именно безопасный read-only API/record-details доступ; технические команды и журналы через владельца не запрашивались. Другие сетевые тесты/изменения вместо недостающего DNS identity не выполняются.
+
 ## Безопасность, валидация и STOP
 
 - `FACT` — перед публикацией отчёта ранее прошли существующие 26 generator tests. Это не live VPN acceptance.
-- `FACT` — диагностические commands не записывали VPS configs/subscriptions/DNS/trust и не перезапускали units; после проб все четыре units сохранили PID/NRestarts. На Windows временные client configs были только в памяти, собственные процессы завершены, рабочие Xray PID сохранены. Новое ПО не устанавливалось.
+- `FACT` — диагностические commands не записывали VPS configs/subscriptions/HTML/DNS/trust и не перезапускали units; после проб все четыре units сохранили PID/NRestarts. Разрешённые постоянные writes текущего этапа — только private operator backup и документация рабочей ветки. Ночные Windows client configs были только в памяти, собственные процессы завершены, рабочие Xray PID сохранены. Новое ПО не устанавливалось.
 - `FACT` — Primary DeepWork и PP-LAB-01 не использовались как targets/control hosts; payment/deployment/merge отсутствуют.
 - `TODO` — результаты staged/full-diff Gitleaks, manual sanitization, GitHub readback и CI для этой редакции фиксируются в существующем Draft PR. Нельзя считать прежний CI проверкой нового commit.
-- `TODO` — не проверены Android/прямые RF-сети, реальные source URLs шести телефонов, III UDP data path и formal acceptance. Конкретная причина loss до delivery listener и доступ к DNS control plane остаются ограничениями.
-- `DECISION` — после этого read-only этапа любые изменения STOP до отдельного разрешения. Ближайший полезный шаг — завершить приватные DNS snapshot/rollback prerequisites и согласовать G1/G2, сохраняя отдельную проверку внешнего пути.
+- `TODO` — не проверены Android/прямые RF-сети, реальные source URLs шести телефонов, III UDP data path и formal acceptance. Конкретная причина loss до delivery listener и недоступность полного authenticated DNS record snapshot остаются ограничениями.
+- `DECISION` — любые production изменения STOP до отдельного разрешения. Ближайший полезный шаг — закрыть точный DNS API blocker, дополнить private snapshot и только затем представить завершённый G1/G2 владельцу, сохраняя отдельную проверку внешнего пути.
