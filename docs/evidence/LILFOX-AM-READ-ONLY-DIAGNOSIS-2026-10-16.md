@@ -1,4 +1,92 @@
-# LilFox Amsterdam — диагностика, восстановление G1/G2 и verification
+# LilFox Amsterdam — final delivery, recovery and acceptance evidence
+
+`FACT` — **FINAL DELIVERY**, 16 October 2026, continuation from `d024608c`. Seven distinct recipient kits exist; the additional recipient was published within the owner's explicit scope. Existing six pages/subscriptions and credentials are preserved. Native Windows basic data-path matrix: **21/21 PASS**, with two HTTPS exit checks per cell. Owner and new recipient additionally passed I/II/III after publication. **This is not 21/21 Android/Happ acceptance.**
+
+`DECISION` — this section is the current checkpoint. All earlier scope restrictions, six-recipient counts, Android III NOT TESTED statements and “no production writes” statements below describe their dated historical missions, not this run. Owner now reports all three Android routes working; I/II include browser exit evidence, III is an owner report without new independently viewed screenshot/exit evidence.
+
+## Final delivery — 16 October 2026, 19:21–19:38 UTC
+
+### Scope, source and preflight
+
+- `DECISION` — owner explicitly authorized only one additional recipient, independent I/II/III authorization, two new delivery files, and justified minimal service restarts. DNS, other recipients' credentials, protocols, ports, certificates, firewall, SSH trust, other nodes, merge and purchases remain outside scope.
+- `FACT` — PR head `d024608c181c2da5a398642c28bb67411566ee6d`, main `8b29c9cff517c0b114a4aee8f6f4745fa94411c3`, AGENTS/security/experiment protocol and the existing private handoff were read. Strict pinned SSH and UpdateHostKeys=no were retained.
+- `FACT` — preflight matched the exact post-G2 page/protected digests recorded below; four original service PIDs/states/restart counters matched. No target file was observed open for writing; each stage also checked exclusive transaction lock, exact hashes, inventory and service states. This is bounded concurrency protection, not protection against a privileged actor bypassing the lock.
+- `FACT` — one-to-one page → subscription → recipient → three server authorizations was resolved privately. All 18 existing profile credentials matched the server. Public slots here R1–R6 follow the frozen **page** inventory order, not the historical sorted-subscription slots S1–S6. The name/path mapping stays private. R7 is the newly authorized recipient.
+- `FACT` — hot reload was unavailable and no Xray user-management API was configured. The observed working Windows Xray had no established Amsterdam I/II connections before mutation; its process was preserved throughout. No working client network/profile was switched.
+
+### Backup, exact diff and rollback
+
+`FACT` — a fresh private backup covers **24 files**: all 20 existing public files plus the delivery configuration and three authorization configurations. It contains sensitive configuration material and remains private, root-owned directory0700/files0600, outside Git. SHA-256: `4cdb8b9374a8f8050d7473300bdfd674401521115ddb9d234625e2d1a3c4d8f4`. All 24 members were restored privately and verified on the VPS and again after transfer to the protected WSL operator store. The earlier G0 HTML backup remains unchanged and verified. No certificate private-key file was copied.
+
+`FACT` — immutable preparation manifest SHA-256: `ca5bdd3e7d4af6e2e650faf48b631081de375b367dc85a814062040932be05cc`. Credentials were generated on the target with CSPRNG: two independent UUIDs, two independent Short IDs and a separate Hysteria2 password; delivery tokens have 256 bits each. Existing authorization was not reused or rotated.
+
+| Operation | Exact scope / Expected | Actual |
+|---|---|---|
+| I authorization | Insert one client and one Short ID; all other original bytes retained; restart only route I unit | PASS, one explicit restart, then 7 recipients + owner exit checks PASS |
+| II authorization | Same restricted additions for II; preserve I/III/delivery states | PASS, one explicit restart, then 7 recipients + owner exit checks PASS |
+| III authorization | Insert only one userpass entry; all original bytes retained; restart only III unit | PASS, one explicit restart, then 7 recipients + owner exit checks PASS |
+| Publication | New subscription first, new landing second; atomic RENAME_NOREPLACE per file; never overwrite a destination | PASS at 19:32:52 UTC; exactly two new public files |
+
+`FACT` — both Xray candidates passed the existing binary's config test. Hysteria2 has no dry-run flag: its candidate was started as a temporary child on an ephemeral loopback UDP listener with update checking disabled; listener ownership was verified and only that child terminated. No additional service was installed.
+
+`FACT` — authorization execution source SHA-256 `7b4dea723f3e47346a2eb04e2e263190f069f1ddc4ad83c1d0870b8883ae9898`; publication source SHA-256 `21253d608af8d00d341d9d89371ec4daac8ea21093a9ddaaee4e93e179ca49b9`. Exact private commands, before/candidate hashes, per-stage intent/readback receipts and recovery instructions accompany the private backup. Mutation was limited to atomic replacement of each approved auth candidate and one restart of its corresponding unit; no restart-all or delivery restart.
+
+`DECISION` — predetermined rollback: restore only the current route's byte-exact original config if the current file still equals our candidate, atomically replace and restart only that unit; retain earlier accepted stages. Unknown hash/write result means STOP, no speculative overwrite. Publication failure permits quarantine of only this run's receipted new files after inode/hash/type checks. Existing files and legacy addresses are never rollback destinations. No rollback was required.
+
+### Delivery and integrity
+
+| Component | Status | Evidence / boundary |
+|---|---|---|
+| Public DNS | PASS | Google + Cloudflare DoH: current A, rcode0, AAAA empty; observed A TTL300 and cached remaining TTL133 respectively; no DNS write |
+| Existing public inventory | PASS | All 20 original public files byte/mode/owner preserved, including six pages and six subscriptions |
+| Config integrity | PASS | Three live auth configs exactly equal the prevalidated candidates; delivery config unchanged; auth count 8 per route = owner + seven recipients |
+| New landing | PASS for source/publication/delivery | Existing branded raster bytes unchanged; recipient name/metadata and an HTML caption for the new recipient added. Existing six visuals not modified. New visual render acceptance remains NOT TESTED |
+| Independent public delivery without owner's VPN | PASS, scoped | Work managed HTTPS egress at 19:35:04–19:35:17 UTC: 7 pages + 7 subscriptions, HTTP200, full SHA/size/no-store match. Work does not use the owner's VPN. Its managed proxy can intercept TLS, so this alone is not an independent origin-certificate audit or proof of RF reachability |
+| Origin TLS and delivery | PASS | Local origin 14/14 normal CA/hostname verification and full-body hash checks at 19:36 UTC |
+| Windows external origin TLS | PASS, scoped | Authenticated bootstrap DoH yielded current address; 14/14 actual external HTTPS full-body/size/Content-Length/no-store and certificate verification. Existing management VPN/TUN remains in use; not a no-VPN phone test |
+| Happ button/copy logic | PASS for handler only | Bounded JS DOM mocks execute each actual page script; 7/7 deep links exactly match the corresponding HTTPS metadata, copy matches, six platform buttons each. No actual app launch, OS clipboard write or phone import claimed |
+| Private Windows kits | PASS | Seven individual named TXT files, HTML copy index, private JSON mapping and integrity receipt; exclusive creation, disk fsync/readback, hashes and ACL limited to owner/SYSTEM/Administrators |
+| Services / backup final guard | PASS | Expected post-restart PIDs, no unexpected restarts; delivery PID unchanged; current 21 profile destinations, unique credentials, matching III pins/validity; 21 original non-auth files unchanged |
+
+`FACT` — no delivery URLs, tokens, client IDs, configuration contents, certificate pins or backup contents are included in Git or CI. The private Windows operator folder is the distribution source; the owner should send each matching individual TXT only, never the entire folder. Old source URLs saved on a recipient phone are not automatically changed by this run.
+
+### Actual route matrix and provenance
+
+`FACT` — tests use the already-installed Windows Xray 26.7.28 as an isolated child, RAM-only config, explicit loopback SOCKS and one selected outbound without fallback. Each cell requires two real HTTPS exit services to match the expected Amsterdam egress, configuration validation, test-child cleanup and preservation of the original working process. No system routing, DNS, TUN, proxy or active profile changes. III uses Hysteria2/QUIC with `allowInsecure=false` and exact subscription certificate pin; the existing self-signed certificate still has no SAN. No TLS bypass.
+
+| Recipient slot (private mapping) | I — native basic | II — native basic | III — native basic | Android/Happ I/II/III for this recipient |
+|---|---|---|---|---|
+| R1 | PASS | PASS | PASS | NOT TESTED / NOT TESTED / NOT TESTED |
+| R2 | PASS | PASS | PASS | NOT TESTED / NOT TESTED / NOT TESTED |
+| R3 | PASS | PASS | PASS | NOT TESTED / NOT TESTED / NOT TESTED |
+| R4 | PASS | PASS | PASS | NOT TESTED / NOT TESTED / NOT TESTED |
+| R5 | PASS | PASS | PASS | NOT TESTED / NOT TESTED / NOT TESTED |
+| R6 | PASS | PASS | PASS | NOT TESTED / NOT TESTED / NOT TESTED |
+| R7 | PASS | PASS | PASS | NOT TESTED / NOT TESTED / NOT TESTED |
+
+`FACT` — I: 19:27:56–19:28:38 UTC; II: 19:29:41–19:30:24 UTC; III: 19:31:11–19:31:51 UTC. Each batch passed eight identities (seven recipients + owner), two endpoints per identity, with no failed cell/retry in this run. The prior mission's isolated S6/II timeout remains historical evidence, not erased by the fresh passes.
+
+`FACT` — before mutation, owner I/II/III each passed two exit services. After all three restarts and publication, the new recipient and owner each passed all three again at 19:33:57–19:34:30 UTC: six additional cells. Final service/PID/config guards passed afterward. Credentials used in native tests come from protected source profiles; subsequent published-body hashes prove the delivered bytes are identical. These are basic useful-traffic tests, not the full formal HTTP/DNS-leak/reconnect/isolation protocol.
+
+`FACT` — the owner separately reports Android/4G+ I/II/III working; I/II browser exit evidence exists with the central architect, III is reported as working. No recipient identity is guessed from that report; it does not fill the 21 recipient phone cells above.
+
+### Execution lesson
+
+`FACT` — a local syntax error prevented one documentation refresh, but the dependent Drive write still used the already prepared previous revision. The previous revision contained valid completed results; only the latest DNS note was absent. No production file was affected. The documentation was synchronized afterward. Prevention: inspect every local preparation exit status and stop dependent external writes on nonzero status; presence of an older output file is not proof that preparation succeeded.
+
+### Remaining limitations and closing decision
+
+- `TODO` — one real phone test of the newly issued landing without another VPN, visible recipient name, Happ import and I/II/III browser egress. No existing authorized phone-control session was available; physical recipient phones remain NOT TESTED.
+- `TODO` — new landing visual acceptance. The approved raster is byte-preserved with an HTML name caption; no independent browser rendering is claimed. Browser rejected local-file navigation by URL policy; no loopback server, alternate browser or other workaround was used to bypass that restriction.
+- `FACT` — ordinary Windows DNS was broken for target and control in the prior checkpoint; the process-local DoH checks do not repair that OS path. A fresh bounded normal lookup produced no target/control result before the 8-second observation deadline; this is NOT RESOLVED / INCONCLUSIVE, not a new ENOTFOUND assertion. No network fix was attempted within this mission.
+- `TODO` — direct RF networks without management VPN, Wi-Fi/mobile diversity, full HTTP/reconnect/restart-isolation/DNS-leak acceptance and UDP application datagram tests. Hysteria2 carrying real HTTPS traffic over QUIC is proven by native tests; arbitrary app UDP relay is not.
+- `FACT` — SSH/config/backup access remains private. No DNS, protocols, ports, firewall, certificates, other recipients' credentials, SSH trust, other nodes, main, merge, deployment or purchases changed beyond the explicitly authorized seventh-recipient publication and three scoped auth restarts.
+
+`DECISION` — **technical delivery and available basic client verification complete; full seven-phone Happ acceptance remains OPEN.** One short owner test: on mobile data with VPN off, open the new recipient's landing from the private kit, verify its name, import into Happ, then select I/II/III in turn and check the browser exit. Stop on TLS errors; do not disable verification. No technical command/log couriering is requested.
+
+---
+
+## Historical checkpoint — final acceptance at 18:13–18:25 UTC
 
 `FACT` — **AMSTERDAM FINAL ACCEPTANCE**, 16 октября, 18:13–18:25 UTC (21:13–21:25 МСК), продолжение от `483bb0b5`: DNS/HTML/configs/службы/backup сохранили эталонное состояние; local origin и внешняя доставка через per-request DoH — 12/12 PASS. **Владелец сообщил реальные Android/Happ I и II basic PASS на 4G+; Windows III впервые проверен: 6/6 basic PASS с certificate pin.** Свежая Windows I/II матрица: 11/12 strict PASS с первого запуска, S6/II — timeout одного endpoint, затем 2/2 PASS в единственной повторной пробе. Системный DNS ноутбука не работает также для контрольного домена. `FULL_HAPP_ACCEPTANCE=NOT_COMPLETE`, `FINAL_ACCEPTANCE=PARTIAL`; G1/G2 не повторялись, production writes не выполнялись. Исторические NOT TESTED/NOT_RUN ниже относятся к прежним этапам.
 
