@@ -1,6 +1,6 @@
 # LilFox Amsterdam — read-only diagnosis и пакет восстановления
 
-`FACT` — последнее продолжение **AMSTERDAM-G0**, 16 октября, 12:40–12:51 UTC: приватный durable backup трёх HTML создан и независимо проверен; оба frozen manifests прежние. Авторизованная панель подтвердила stale A, DNS only, Auto, пустой comment и IDs аккаунта/зоны. **Остаётся обязательный blocker: record_id и полный API snapshot недоступны через разрешённый контур.** `AMSTERDAM_G0=PARTIAL_STOP`, `EXECUTION_READY=false`, `READY_FOR_ONE_OWNER_DECISION=false`. Итоговые доказательства и уточнения пакета — в секции «Завершение G0»; прежние результаты ниже сохранены с временными границами.
+`FACT` — последнее продолжение **AMSTERDAM-G0 / Cloudflare UI Recovery**, 16 октября, 13:04–13:06 UTC: штатный UI однозначно выбирает одну целевую A-запись и открывает отдельную редактируемую форму. Все отображаемые поля сверены до и после read-only reload. **UI-G1 подготовлен для отдельного утверждения без API record_id**; сохранение/изменение полей не выполнялось. `UI_G1_PROCEDURE=READY_FOR_REVIEW`, `UI_G1_WRITE=NOT_RUN`, `G0_PASS=NOT_DECLARED`, `EXECUTION_AUTHORIZED=false`. Последняя процедура — в секции «UI-G1»; прежний API blocker остаётся ограничением API-варианта. Backup и ночная диагностика не повторялись.
 
 - `FACT` — Evidence ID: `LILFOX-AM-READ-ONLY-2026-10-16`; отчёт обновлён после подключения Desktop Commander.
 - `FACT` — основные сетевые и серверные наблюдения: 15 октября 2026, 21:45–22:14 UTC (16 октября, 00:45–01:14 МСК).
@@ -281,11 +281,67 @@ content = CURRENT_ADDRESS   # only intended semantic delta
 
 `DECISION` — итог: `HTML_BACKUP_BLOCKER=CLOSED`, `DNS_LOGIN_BLOCKER=CLOSED`, `DNS_RECORD_ID_AND_FULL_SNAPSHOT_BLOCKER=OPEN`. `AMSTERDAM_G0=PARTIAL_STOP`; G0 PASS и готовность одного production-решения не объявляются. Центральному архитектору нужен именно безопасный read-only API/record-details доступ; технические команды и журналы через владельца не запрашивались. Другие сетевые тесты/изменения вместо недостающего DNS identity не выполняются.
 
+## UI-G1 — альтернативная процедура для утверждения, 16 октября, 13:04–13:06 UTC
+
+`DECISION` — новое прямое поручение разрешает подготовить штатный UI-вариант без обязательного API record_id. Для этого варианта прежнее требование полного API snapshot заменяется проверяемым snapshot всех отображаемых полей, однозначным выбором записи и явным принятием ограничений UI. Это проект альтернативы, не разрешение исполнения и не обход блокировки API. API-вариант выше остаётся заблокированным; его prerequisites не переносятся автоматически на UI-G1.
+
+### Проверка осуществимости без записи
+
+`FACT` — использована прежняя авторизованная Chrome-вкладка Records в нужном account/zone. Exact full-host search показал одну карточку, `Showing 1-1 of 1`; она раскрывается через собственный `Expand … record`. В карточке ровно одна form. Bulk selection не отмечен. Поле `IPv4 address` enabled и не read-only. Save disabled при исходных данных. Это подтверждает доступность отдельной формы, но не доказывает успешность будущего write, серверные write permissions или поведение сохранения.
+
+| Отображаемое поле / контроль | Факт до и после reload | Требование будущего postcheck |
+|---|---|---|
+| Account и zone | Прежние account URL и заголовок нужной зоны | Тот же account/zone, не соседний ресурс |
+| Полное имя | Short name + zone suffix совпадают с DELIVERY_HOST; одна карточка | DELIVERY_HOST, одна карточка, тот же exact search |
+| Type | A | A |
+| IPv4 address | OLD_ADDRESS | Только CURRENT_ADDRESS |
+| Proxy status | DNS only, switch `aria-checked=false` | DNS only / false |
+| TTL | Auto; связанное control value `1` | Auto / 1, не ручные 300 секунд |
+| Record Attributes | Раскрыты; показан только Comment, он пуст | Comment пуст; любые дополнительно появившиеся поля сверить до write |
+| Другие controls | Save, Cancel, Delete; отдельные combobox Type/TTL | Не использовать Delete, bulk, Add record, Import/Export, proxy switch |
+
+`FACT` — выполнены раскрытие, DOM/read-only чтение полей, Cancel, один reload Records, повторное раскрытие/сравнение и Cancel. Значения name/content/type/proxy/TTL/comment прежние, Save оставался disabled. Никакое поле DNS-записи не заполнялось; ни Save, ни Enter в record form не нажимались. Auth/API/VPS/HTML/backup операции не выполнялись.
+
+`FACT` — [официальная процедура Cloudflare](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/) предусматривает выбор конкретной записи, Edit, изменение полей и Save; для изменения origin IP требуется её content. Текущая форма открывается через Expand, без отдельного шага Edit. Штатная форма сама связывает Save со своей записью; это достаточный наблюдаемый UI scope для предложения процедуры, а не независимая проверка внутреннего record_id или request payload.
+
+### Предлагаемый исполнительный пакет — только после нового разрешения
+
+`TODO` — Target: ровно существующая A-запись DELIVERY_HOST в зафиксированной зоне. Reason: OLD_ADDRESS больше не принадлежит владельцу. Impact: после DNS propagation новые запросы к owned hostname направятся на CURRENT_ADDRESS. DNS-only, Auto, имя/type/comment не меняются. VPS, сертификаты, HTML и subscriptions не входят в UI-G1. Исправление трёх metadata остаётся отдельным G2.
+
+1. `TODO` — **Preflight:** проверить отдельное разрешение именно на UI-G1, точный CURRENT_ADDRESS из утверждённого приватного packet и принятие forward-only recovery. Ранее проверенный private HTML backup остаётся прежним prerequisite G2; в этой миссии он не перечитывался. Для UI-G1 достаточно сохранённого private UI before-snapshot; нельзя называть его полным API backup. Перед выполнением сохранить свежие отображаемые before-values и временные отметки в существующем private operator space без cookies/tokens/общего zone export. Не менять уже созданный HTML archive.
+2. `TODO` — **Fresh selection:** открыть нужный account/zone → Records; без открытой изменённой формы reload → exact full-host search. Дождаться окончания loading. Требовать ровно один результат на единственной странице, exact имя/type/content, отсутствующие конфликтующие A/AAAA/CNAME в результатах этого имени, никакого bulk selection. Все locators должны разрешаться ровно в один элемент. Сверить не по позиции строки, а по account + zone + FQDN + type + OLD_ADDRESS + DNS only + Auto.
+3. `TODO` — **Fresh form:** раскрыть только эту карточку, Record Attributes; прочитать все видимые поля и сравнить с таблицей. Поля, не показанные в этой версии UI, не считать отсутствующими в backend. Если появились новые поля/metadata — сначала включить их в before-snapshot и пересмотреть packet, без write. Нужен короткий согласованный период без параллельных изменений этой записи другими операторами. UI не предоставляет наблюдаемого CAS/lock: остаётся race между чтением и Save.
+4. `TODO` — **Единственное изменение формы:** внутри exact target article выбрать textbox `IPv4 address` и выполнить только `fill(CURRENT_ADDRESS)`. Не заполнять name/comment, не выбирать Type/TTL, не переключать proxy, не нажимать Enter. Повторно прочитать форму: единственная delta относительно before должна быть IPv4 address. Ровно одна target form и одна её Save; Save должен стать enabled. Любая дополнительная delta/validation error/двусмысленность — Cancel при известном несохранённом состоянии и STOP.
+5. `TODO` — **Публикация:** только после отдельного owner gate и успешного pre-save сравнения нажать ровно один раз Save, scoped к этой карточке/form. Записать время и наблюдаемый outcome. Не использовать глобальный первый Save, клавиатурный submit, bulk, скрытые API или повторную отправку. Подготовительный этап этого не проверял и не выполнял.
+6. `TODO` — **Control-plane postcheck:** после завершения сохранения заново найти exact host, проверить одну A-карточку, раскрыть и сверить все поля: CURRENT_ADDRESS и прежние name/type/DNS only/Auto/comment. Одного toast/исчезновения формы недостаточно. Закрыть неизменённую форму Cancel, сделать один reload Records и повторить свежий readback. Успешная форма/уведомление без подтверждённого persisted readback не дают PASS. Сохранить private after-snapshot и proof screenshot без auth data; в публичный PR — только санитизированный receipt, не сырой снимок панели.
+7. `TODO` — **DNS postcheck:** Google и Cloudflare DoH для exact hostname, A и AAAA; ожидать единственный CURRENT_ADDRESS и отсутствие неожиданного AAAA. Auto имеет effective TTL 300 секунд по ранее проверенному reference. Наблюдение ограничить 10 минутами от Save, до 60 секунд между попытками, без cache flush/сетевых переключений. При deadline — STOP propagation с доказательствами; не возвращать старый IP и не повторять Save. Это не обещание обновления caches всех устройств.
+8. `TODO` — **Граница результата:** UI-G1 PASS требует persisted UI readback всех видимых полей и двух resolver checks. Без API нельзя доказать неизменность скрытых tags/settings/internal IDs или увидеть точный payload. Эту границу owner должен принять до исполнения. Сохранённый UI snapshot позволяет сравнить видимые поля, а не полностью восстановить backend record. External HTTPS/delivery, сохранённые Happ source URLs, metadata G2 и III acceptance остаются самостоятельными checks; DNS PASS не является VPN PASS и сам по себе не открывает G2 без разрешения.
+
+### PASS / STOP / безопасное восстановление
+
+| Событие | Действие / verdict предлагаемого run |
+|---|---|
+| UI target/forms/поля совпали, IPv4 редактируемый | `UI_PREFLIGHT=PASS`; до разрешения Save запрещён |
+| После Save persisted UI readback совпал, оба resolver выбрали current, неожиданных AAAA нет | `UI_G1=PASS` только в указанной границе наблюдения; не G0/VPN/шесть Happ PASS |
+| Не тот account/zone, несколько результатов/страниц, content drift, отсутствует поле, session loss/challenge, changed UI или конкурирующая правка | STOP до Save; не выбирать другую запись и не создавать новую |
+| Новый адрес уже стоит до начала write | Не отправлять Save. Read-only проверить текущее состояние и сообщить об изменении baseline; не приписывать результат этому run |
+| Проверка формы перед Save не прошла | Cancel только при известном несохранённом состоянии; STOP без production write |
+| Save timeout/error или outcome неизвестен | Не нажимать Save повторно. Один различающий read-only reload/exact-record readback. CURRENT_ADDRESS со всеми ожидаемыми полями — фиксировать известный результат и STOP для оценки, не продолжать автоматически. OLD_ADDRESS — фиксировать отсутствие подтверждённой правки и STOP. Неизвестный/иной результат — STOP без новых writes |
+| CURRENT_ADDRESS persisted, но resolver/HTTPS не прошёл | Оставить безопасный current A, STOP соответствующего path; не возвращать OLD_ADDRESS и не удалять запись |
+| После Save изменились другие поля / запись исчезла / обнаружен conflict | STOP, сохранить before/after evidence; никаких автоматических overwrite, delete/recreate или попыток «вернуть всё» |
+| Для продолжения требуется API/token/более широкие права или изменение VPS | STOP; это отдельное решение, не часть UI-G1 |
+
+`DECISION` — inverse DNS rollback на OLD_ADDRESS запрещён, поскольку destination чужой. Recovery этого минимального пакета — сохранить подтверждённый safe current A и прекратить изменения при сбое. Если безопасный current A не подтверждён, нельзя угадывать исправление; нужны evidence и новое решение. Backup старого content не является безопасным DNS rollback. Maintenance record, удаление DNS, ручной возврат proxy/TTL и любые вторые корректирующие writes автоматически не разрешаются.
+
+`TODO` — остаточный риск UI-варианта: нет наблюдаемого CAS, полного API snapshot, полного postcheck скрытых полей или доказательства server-side write permission до реального сохранения. Если требуется гарантия неизменности всех backend business fields, UI недостаточен; минимальное решение тогда — ранее описанный safe authenticated API read. Для ограниченной правки через штатную форму record_id не обязателен при явном принятии перечисленных UI-границ.
+
+`DECISION` — `UI_TARGET_SELECTION=PASS`, `UI_FORM_INSPECTION=PASS`, `UI_G1_PROCEDURE=READY_FOR_REVIEW`, `UI_G1_WRITE=NOT_RUN`, `G0_PASS=NOT_DECLARED`, `EXECUTION_AUTHORIZED=false`. Владелец может одним отдельным решением разрешить ровно описанный UI-G1 с его ограничениями и forward-only recovery; нынешнее поручение не разрешает Save. G2 не добавляется в это разрешение автоматически. Полная диагностика, backup и существующие клиентские тесты не повторялись.
+
 ## Безопасность, валидация и STOP
 
 - `FACT` — перед публикацией отчёта ранее прошли существующие 26 generator tests. Это не live VPN acceptance.
 - `FACT` — диагностические commands не записывали VPS configs/subscriptions/HTML/DNS/trust и не перезапускали units; после проб все четыре units сохранили PID/NRestarts. Разрешённые постоянные writes текущего этапа — только private operator backup и документация рабочей ветки. Ночные Windows client configs были только в памяти, собственные процессы завершены, рабочие Xray PID сохранены. Новое ПО не устанавливалось.
 - `FACT` — Primary DeepWork и PP-LAB-01 не использовались как targets/control hosts; payment/deployment/merge отсутствуют.
 - `TODO` — результаты staged/full-diff Gitleaks, manual sanitization, GitHub readback и CI для этой редакции фиксируются в существующем Draft PR. Нельзя считать прежний CI проверкой нового commit.
-- `TODO` — не проверены Android/прямые RF-сети, реальные source URLs шести телефонов, III UDP data path и formal acceptance. Конкретная причина loss до delivery listener и недоступность полного authenticated DNS record snapshot остаются ограничениями.
-- `DECISION` — любые production изменения STOP до отдельного разрешения. Ближайший полезный шаг — закрыть точный DNS API blocker, дополнить private snapshot и только затем представить завершённый G1/G2 владельцу, сохраняя отдельную проверку внешнего пути.
+- `TODO` — не проверены Android/прямые RF-сети, реальные source URLs шести телефонов, III UDP data path и formal acceptance. Причина loss до delivery listener и недоступность полного API snapshot остаются ограничениями; UI-G1 явно ограничен отображаемыми полями и публичным DNS.
+- `DECISION` — любые production изменения STOP до отдельного разрешения. Ближайший полезный шаг — review и отдельное утверждение UI-G1 владельцем с принятием его residual risks и forward-only recovery; если нужен полный backend-fields proof, сначала решить API blocker. Ни один вариант не означает разрешение G2 или доказательство внешней доставки.
