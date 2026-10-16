@@ -1,5 +1,7 @@
 # LilFox Amsterdam — read-only diagnosis и пакет восстановления
 
+`FACT` — утреннее продолжение **AMSTERDAM-G0**: allowlist и dry-run проверены; DNS control plane и durable backup ещё отсутствуют. Текущий write verdict **PARTIAL / STOP**, а не готовность к применению. Актуальный G1/G2 и recovery policy приведены в секции AMSTERDAM-G0 ниже; ночные результаты сохранены как историческое evidence.
+
 - `FACT` — Evidence ID: `LILFOX-AM-READ-ONLY-2026-10-16`; отчёт обновлён после подключения Desktop Commander.
 - `FACT` — основные сетевые и серверные наблюдения: 15 октября 2026, 21:45–22:14 UTC (16 октября, 00:45–01:14 МСК).
 - `FACT` — исходный main: `8b29c9cff517c0b114a4aee8f6f4745fa94411c3`.
@@ -95,45 +97,123 @@
 
 `FACT` — `BASIC_HTTPS_EXIT=PASS` относится к одному candidate каждого I/II в текущем контуре ноутбука, где management TUN/proxy оставался включён. Нет трёх reconnect repetitions, HTTP acceptance, прямого RF/mobile comparison или restart/isolation tests. Это не formal G2/G3, не 18/18 и не доказательство восстановления Happ. Независимый нативный III client в проверенном каталоге существующего Happ core не найден; установка запрещена, III client test не подменён старой WSL timeout-пробой.
 
-## Минимальный change packet — НЕ ПРИМЕНЁН
+## AMSTERDAM-G0 — актуальный пакет подготовки, 16 октября утром
 
-`DECISION` — следующие gates независимы и требуют отдельного разрешения владельца. Секретные IDs/allowlists/hashes агент подставляет из разрешённого приватного inventory; владелец не должен переносить их вручную. DNS control-plane IDs/snapshot пока недоступны, поэтому исполняемый DNS-пакет ещё не готов. Новые серверные protocol changes не предлагаются.
+`FACT` — G0 наблюдения 06:49–07:01 UTC. Main и Draft PR №15 не изменились с предыдущего этапа. Приватный handoff по-прежнему modified 2026-10-14 20:24:55 UTC. Клиентские I/II, полный Caddy delivery и III acceptance повторно не запускались.
 
-### G0 — обязательный preflight перед любой записью
+`DECISION` — прежний черновой пакет в этом месте заменён настоящей редакцией. Владелец подтвердил: OLD_ADDRESS больше не наш. Обратный DNS rollback и возврат активных legacy URL запрещены; копия старого состояния не является разрешением снова направлять на него пользователей.
 
-- `TODO` — повторно проверить прежнюю SSH pin, target identity, текущий provider assignment и неизменность затрагиваемых объектов. Host-key mismatch/нет pin — STOP без TOFU.
-- `TODO` — получить DNS control-plane read: ровно одна ожидаемая A, record/zone IDs, TTL и DNS-only status. Resolver TTL не заменяет control-plane snapshot.
-- `TODO` — сохранить приватный allowlist трёх legacy-meta files с original hashes и одно-единственное разрешённое преобразование authority; отдельно hashes шести subscription files и route/Caddy configs как protected set.
-- `TODO` — предварительно проверить безопасный rollback. OLD_ADDRESS после provider replacement может больше не принадлежать владельцу. Snapshot не делает возврат на него безопасным. Если безопасного возврата нет — gate остаётся закрытым до отдельного согласованного recovery/roll-forward плана.
+`FACT` — итог подготовки: `AMSTERDAM_G0=PARTIAL_STOP`, `EXECUTION_READY=false`. Данные DNS control plane не получены, постоянная резервная копия трёх HTML не создана. Пакет описан и проверен в доступном read-only объёме, но ещё не готов к разрешению production-записи одним решением.
 
-### G1 — одна DNS A-запись
+### Новые доказательства и конкретные блокеры
 
-- `TODO` — цель: DELIVERY_HOST A, `OLD_ADDRESS -> CURRENT_ADDRESS`. Ни одной другой записи/параметра не менять.
-- `TODO` — будущий API shape: `PATCH /zones/{verified_zone_id}/dns_records/{verified_record_id}`, payload содержит только `content=CURRENT_ADDRESS`. Непосредственно перед PATCH повторить GET и сравнить original type/name/content/ttl/proxied с snapshot. Compare-before-write не атомарный CAS: при параллельном редактировании — STOP.
-- `TODO` — backup: приватный snapshot полной одной DNS-записи с временем, IDs и permissions 0600, вне Git/VPS public root. Provider assignment CURRENT_ADDRESS подтверждён до применения.
-- `TODO` — Expected: меняется только content; TTL/proxy status сохранены. Readback control plane точен, затем оба resolver после прежнего TTL/распространения выбирают CURRENT_ADDRESS.
-- `TODO` — rollback: вернуть original content только после подтверждения владения и безопасной выдачи на прежнем адресе; иначе gate закрыт по G0. Не откатывать вслепую.
-- `TODO` — PASS: точный DNS readback и два согласованных resolver. Отдельно проверить real HTTPS delivery; DNS PASS не равен restoration PASS.
-- `TODO` — риск низкий для изолированной записи, но прежний чужой адрес и stale caches создают риск неверного destination. Ошибка сверки, multiple/unexpected records или неподтверждённый rollback — STOP.
+| Проверка | Actual |
+|---|---|
+| Свежие A/AAAA, Google + Cloudflare | DELIVERY_HOST A → OLD_ADDRESS, TTL=300; LEGACY_CERT_HOST A → OLD_ADDRESS, TTL=3600; AAAA пусты у обоих |
+| NS/SOA зоны | Cloudflare authoritative names обнаружены; идентификаторы аккаунта/зоны/записи из публичного DNS не получены |
+| Read-only panel | Подключённый Chrome открыл Cloudflare sign-in; DNS records page не доступна в этой сессии |
+| Идентификаторы и параметры записи | zone_id=NOT_READ, record_id=NOT_READ, control-plane TTL=NOT_READ, proxied=NOT_READ |
+| Существующий CLI/API-контур | В проверенных Windows/WSL env нет доступного CF token/key; Wrangler executable не найден; четыре проверенных Windows config locations не содержат default config. Это ограниченный поиск, а не утверждение об отсутствии credentials во всём компьютере |
+| Desktop Commander / SSH | После краткого разрыва DC Online; прежняя pin/identity найдены, все G0 SSH-запросы прошли strict trust без TOFU/обновления ключей |
+| Текущий адрес сервера | CURRENT_ADDRESS присутствует на interface pinned target; OLD_ADDRESS на interfaces отсутствует |
+| Static staging prerequisites | Каталог вне public root на той же FS возможен; свободно больше 64 MiB. Stage/backup directories не создавались |
+| Старый address-fix snapshot | Существует; references: 6 subscription files, 0 HTML. Для G2 это не резервная копия трёх текущих Landing |
 
-### G2 — только три legacy metadata authority
+`FACT` — значения IDs/TTL/proxy нельзя подменять догадкой из DNS-only handoff. Cloudflare sign-in не завершался; новые credentials, OAuth grants, keyring access и установки не создавались. Панель оставлена для продолжения входа; cookies/токены браузера не извлекались.
 
-- `TODO` — после DNS gate изменить в ровно трёх текущих Landing единственный subscription meta origin: LEGACY_CERT_HOST authority -> уже существующий DELIVERY_HOST authority. Сохранить HTTPS scheme, port, private path/token, query/fragment, body/assets и все auth/pins; остальные три Landing и шесть subscriptions не менять.
-- `TODO` — exact scope до apply: HTMLParser подтверждает 6/6 metadata, split 3+3; каждый source path — regular non-symlink file в ожидаемом root с original hash. Частная allowlist фиксируется до записи. Любое расхождение — STOP.
-- `TODO` — backup: только три исходных файла с hashes/permissions/ownership в отдельном приватном 0700 каталоге вне web root/Git; достаточное место и readback проверены.
-- `TODO` — publication: подготовить три candidates в приватном временном каталоге на той же FS вне web root; проверить единственную разрешённую замену, metadata/path и protected hashes. Публиковать каждый независимый recipient file атомарным file replace после повторной сверки original hash и сохранения mode/owner. Не удалять/заменять существующий public каталог, не запускать генератор поверх него, не оставлять temp files в web root. Общая трёхфайловая операция не является одной атомарной транзакцией; receipt учитывает каждый опубликованный файл.
-- `TODO` — Expected: 6/6 Landing metadata используют собственный origin; tokenized paths и 18 profiles неизменны. Static Caddy reload/restart не нужен и не разрешён.
-- `TODO` — rollback: восстановление только фактически затронутых файлов по receipt с hash readback и проверкой protected set. Восстановление legacy links допустимо лишь при безопасном destination; иначе gate закрыт по G0. Чужие файлы не удалять.
-- `TODO` — PASS: полные шесть Landing и шесть subscription fetches через новый DNS, настоящая origin TLS verification, правильный recipient correspondence, по три профиля, 18 current destinations, отсутствие изменения protected files. Затем фактический refresh Happ. Риск средний: меняется доставка трём получателям.
-- `TODO` — уже сохранённые в Happ legacy source URLs не обновятся от правки HTML. Нужны точная сверка source URL и безопасная повторная передача текущего приватного подключения; credentials не регенерировать автоматически.
+`FACT` — доступные самостоятельные read-only пути к панели/CLI проверены; authenticated DNS read — текущий blocker. Подбор IDs, перенос браузерных cookies, массовый поиск секретов и переключение на другую сессию ради обхода входа не выполнялись.
 
-### G3 — остаточный внешний delivery path и клиентская приёмка
+### Точная allowlist без персональных URL
 
-`TODO` — до объявления восстановления различить текущий TUN/proxy path и прямую целевую сеть одним согласованным независимым клиентским тестом с source/time и ingress observer. Не отключать рабочий management VPN без отдельного разрешения. Сначала проверить фактические active routing/sniffing flags, если появится разрешённый доступ к ним; их значения не угадывать.
+`FACT` — на текущем pinned target шесть страниц, ровно одна metadata в каждой; legacy origin только в **slots 2, 5, 6**. Slot — 1-based позиция в лексикографически отсортированном списке текущих `page/*.html`; это не имя получателя и не файл для угадывания.
 
-`TODO` — если direct delivery при правильных DNS/origin всё ещё не достигает VPS, готовить отдельный пакет только по доказанному network/front-door дефекту. Сейчас нет основания переносить порты, устанавливать новый tunnel/VPN, менять firewall, сертификаты или REALITY. Риск таких предполагаемых изменений выше DNS/meta-правок; они не входят в этот пакет.
+`FACT` — точный состав связан с содержимым/путями/правами, а не только с порядковым номером:
 
-`TODO` — III проверить существующим независимым UDP/QUIC-клиентом, когда такой контур доступен. Затем шесть Happ subscriptions × I/II/III, точная identity/source, DNS, HTTP/HTTPS, два exit-IP checks и три clean reconnects в целевых mobile/Wi-Fi сетях. Restart/isolation acceptance требует отдельного будущего разрешения; нынешний запрет действует. Без недостающих проверок verdict PARTIAL.
+| Guard | SHA-256 |
+|---|---|
+| Все шесть текущих страниц и их metadata роли | `61a36ceb21976cb1201b14681e9f7c79182302e8067bca2124802085d10bc251` |
+| Protected set: шесть subscriptions + Caddy config + configs I/II/III | `7f517d021fc6189b1b4b47e52c38a18c8c256c599a2a9c89cf841808231f08c1` |
+
+`DECISION` — digest не является файлом backup или working token. Приватные paths/URL и сами source bytes в публичный документ не включены. Перед исполнением агент восстанавливает allowlist из pinned source и обязан получить те же digests. При drift — STOP, а не автоматическая замена эталона.
+
+`FACT` — алгоритм page manifest: для шести файлов в указанном порядке формируются объекты с ключами `slot, role, file, sha256, size, mode, uid, gid, nlink`; `file` — исходный абсолютный private path, role — `owned|legacy`, sha256 — исходные bytes, mode — `stat.S_IMODE`. Hash от UTF-8 `json.dumps(rows, sort_keys=True, separators=(',', ':'))`. Protected manifest: sorted subscription files, затем Caddy, затем I/II/III; поля `file,sha256,mode,uid,gid`, mode = mode bits & 0777; та же сериализация.
+
+`FACT` — все три source files regular, non-symlink, nlink=1. Все шесть metadata ссылаются на существующие локальные subscription files; новые назначения не придумывались.
+
+### Проверенные candidates и резервирование
+
+`FACT` — в RAM VPS подготовлены ровно три candidates. В каждом заменяется только authority subscription meta: LEGACY_CERT_HOST -> DELIVERY_HOST при сохранении HTTPS и исходного port. HTMLParser проверил один meta; source tag однозначен. Сохранены path/token, query, fragment и все bytes вне единственного meta tag; обратная byte-substitution возвращает исходник. Изменения не публиковались.
+
+`FACT` — исходные три HTML суммарно 8 122 223 bytes. In-memory tar.gz — 5 924 601 bytes, ровно три regular `page/<original-name>` entries с mode/uid/gid. Полный readback каждого member совпал SHA-256 с исходником. Это `BACKUP_ROUNDTRIP_DRY_RUN=PASS`, **не durable backup**: bytes не экспортировались, archive не сохранялся и после процесса не доступен для восстановления.
+
+`FACT` — существующий серверный backup каталог проверен без symlink traversal и без распаковки в FS: один snapshot, нет подходящих HTML/archive copies. Snapshot адресной правки не содержит HTML references. Независимая восстановимая копия трёх Landing пока отсутствует.
+
+`DECISION` — текущая миссия read-only и разрешает изменения только документации. Новые постоянные backup/candidate files на VPS/Windows не записывались. Поэтому полное требование «подготовлены проверенные резервные копии» ещё не выполнено; dry-run не переименовывается в backup PASS.
+
+`TODO` — до production writes следующего разрешённого run создать off-VPS backup в существующем приватном operator workspace WSL, не в public root/репозитории/общих источниках и не на общем NTFS-каталоге без эквивалентных ACL. Новая директория 0700 через exclusive create; archive/manifest 0600, без overwrite. Сохранить только три HTML и один target DNS-record snapshot; private SSH keys и route credentials не копировать. Записать fsync, прочитать архив заново с диска и проверить ровно три разрешённых regular members, hashes, mode/uid/gid; path traversal/symlink/hardlink entries запрещены. Свежий target readback должен совпасть с frozen page/protected manifests. Без этого ни G1, ни G2 не стартуют.
+
+### Исполнительный порядок после закрытия G0 и отдельного разрешения
+
+`DECISION` — сейчас никакие перечисленные ниже writes не выполнялись. Одно будущее разрешение может покрыть тесно связанный recovery run с checkpoints: проверенный backup → G1 → readback → G2 → readback, с остановкой на первом неожиданном результате. Оно не покрывает другие записи, протоколы, новые credentials, services или targets.
+
+#### G1 — ровно одна A-запись
+
+1. `TODO` — authenticated read только нужной зоны и точного DELIVERY_HOST: `GET /zones?name=ZONE`, затем `GET /zones/{zone_id}/dns_records?name=DELIVERY_HOST` и details выбранного record_id. Проверить аккаунт/зону, ровно одну ожидаемую A, отсутствие конфликтующего CNAME/AAAA на этом имени, исходный OLD_ADDRESS и `proxied=false`. Иное состояние — STOP и пересмотр packet, не исправление соседних records.
+2. `TODO` — сохранить read-only snapshot конкретной записи: IDs, type/name/content/ttl/proxied и остальные business fields; без Authorization/cookies. Не экспортировать всю зону с другими проектами. TTL брать из control plane, не из resolver cache.
+3. `TODO` — непосредственно перед write повторить GET и сравнить business fields/IDs с snapshot. Не называть compare-before-write атомарным CAS. При конкурирующей правке — STOP.
+4. `TODO` — один `PATCH /zones/{verified_zone_id}/dns_records/{verified_record_id}`. Согласно [актуальному Cloudflare API](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/), сформировать A payload с исходными обязательными полями, изменяя по смыслу только content:
+
+```text
+type    = before.type        # must be A
+name    = before.name        # exact DELIVERY_HOST
+ttl     = before.ttl         # not inferred from public DNS
+proxied = before.proxied     # must remain false
+content = CURRENT_ADDRESS   # only intended semantic delta
+```
+
+`DECISION` — это уточняет прежний черновик «payload только content»: API schema описывает также name/ttl/type. Не использовать PUT, bulk/batch update, delete/recreate, смену proxy status или TTL. IDs/значения агент подставляет из проверенного snapshot, не просит владельца переносить их вручную.
+
+5. `TODO` — details readback: content текущий; IDs/name/type/ttl/proxied/comment/tags/settings и остальные protected business fields прежние. Изменение серверных timestamps как API bookkeeping не считать изменением бизнес-параметров. При write timeout выполнить один различающий GET; неизвестный outcome — STOP, не повторять PATCH вслепую.
+6. `TODO` — оба resolver должны выбрать CURRENT_ADDRESS после cache expiry; интервалы наблюдения не длиннее 60 секунд, конечный deadline — два исходных TTL + 60 секунд, максимум 10 минут для этой операции. При большем control-plane TTL — заранее пересмотреть окно, не ждать бесконечно. Далее выполнить bounded TLS/delivery verification; не очищать global DNS/cache и не переключать management VPN.
+
+`TODO` — риск: некорректный record scope, cache propagation и конкурирующая правка. Поле proxied не переключается. PASS G1 — точный control-plane readback и два resolver, а не работа VPN.
+
+#### G2 — только metadata трёх зафиксированных страниц
+
+1. `TODO` — G1 должен подтвердить безопасный текущий DNS destination; fresh pinned source должен совпасть с обоими frozen digests. Backup readback обязан пройти до любого production write.
+2. `TODO` — подготовить точно проверенное RAM-преобразование в приватном 0700 stage вне public root на той же VPS FS. Candidates создаются эксклюзивно, без shell URI arguments. Не сериализовать заново весь HTML; заменить только raw content attribute единственного meta tag. Сохранить исходные mode/owner после подготовки и до публикации.
+3. `TODO` — проверить 3 candidates: единственная authority substitution, path/token/query/fragment/scheme/port неизменны, HTML outside tag прежний, никаких новых file targets. Проверить protected set и safe parent directories.
+4. `TODO` — последовательно публиковать каждый файл атомарным file replace, используя private allowlist, directory handles/no-follow и повторный source hash/nlink/owner check. Не заменять каталог, не удалять чужие файлы и не запускать generator поверх public root. После каждого replace — readback hash и приватный receipt по конкретному файлу. Три замены не являются одной атомарной транзакцией.
+5. `TODO` — readback: 6/6 metadata на собственном origin, 6 subscriptions и route/Caddy configs имеют прежний protected digest. Все 12 точных путей должны проходить полное body/hash/TLS сравнение на origin. Никаких restart/reload, certificate changes, credential changes или subscription regeneration.
+6. `TODO` — настоящую внешнюю доставку и Happ refresh проверить отдельно. Уже сохранённый в телефоне legacy source URL не обновляется от HTML; его exact identity надо сверить прежде, чем обещать восстановление.
+
+`TODO` — риск средний: три пользователя могут временно получить непригодный Landing, а операция не глобально атомарна. Stop до следующего файла при любой ошибке; ранее опубликованные результаты не откатывать на чужой origin.
+
+### Безопасное аварийное восстановление без OLD_ADDRESS
+
+`DECISION` — обычный inverse rollback невозможен: OLD_ADDRESS не наш. Требуется отдельное принятие владельцем следующей forward-only recovery policy в разрешении будущего G1/G2; нынешняя read-only миссия её не авторизует. Без принятой policy write gate закрыт.
+
+| Сбой | Предлагаемое безопасное действие в будущем run |
+|---|---|
+| Нет проверенного durable backup / manifest drift / SSH pin mismatch | Никаких writes; STOP |
+| G1 не отправлен или отклонён API | Не переходить к G2; STOP, не менять другие records |
+| G1 timeout, outcome неизвестен | Один GET. Если результат неизвестен — STOP без повторов |
+| G1 A уже подтверждён на нашем CURRENT_ADDRESS, но external HTTPS FAIL | Оставить безопасное новое A, сохранить evidence и STOP внешнего path. Не возвращать старый IP и не удалять запись из-за одного network failure |
+| G1 неожиданно изменил другие поля / конкурентная правка | STOP, сохранить snapshot/readback; никаких автоматических чужих-field overwrite/delete |
+| G2 source drift / ошибка подготовки | Не публиковать новый файл, сохранить ранее подтверждённые безопасные результаты; STOP |
+| Уже опубликованный G2 HTML повреждён и его hash равен receipt этого run | Восстановить из проверенного backup **с повторно внесённым owned authority** в RAM; проверить frozen original + точный candidate hash, затем атомарно опубликовать только этот файл |
+| Исправленный безопасный candidate не удаётся восстановить | Только если заранее включено в разрешение: атомарный maintenance HTML без JavaScript, ссылок, redirect и personal data в том же allowlisted файле; временный отказ выдачи, не перенаправление на OLD_ADDRESS. Если fallback не разрешён — STOP без дополнительных writes |
+| Исходный backup содержит legacy URL | Использовать как архивный source для ремонта, никогда не публиковать его bytes вслепую |
+
+`DECISION` — DNS DELETE/recreate, rollback на OLD_ADDRESS, изменение других zone records и автоматический перенос на другой сервер в пакет не входят. Физический backup сохраняет прежнее состояние для проверки/ремонта, но не делает прежний destination безопасным.
+
+`TODO` — до production approval предъявить владельцу завершённый private DNS snapshot с IDs/TTL/proxy, подтверждение durable backup и точную safety policy. Сейчас эти prerequisites не все выполнены, поэтому `READY_FOR_ONE_OWNER_DECISION=false`.
+
+### Независимые оставшиеся задачи
+
+`FACT` — внешний HTTPS отказ до наблюдаемого listener и III UDP/QUIC acceptance не устранены и не переобозначены как DNS/meta defects. G0 не повторял ночные client tests. Ночные I/II HTTPS successes относятся к тогдашней Windows TUN/proxy среде; они не становятся сегодняшним Android PASS.
+
+`TODO` — после G1/G2 провести независимый реальный Happ refresh и целевую клиентскую матрицу. При остающемся network failure — один различающий read-only test с source/time/control, затем STOP направления; не менять протоколы, ports, firewall, certificate pins или рабочую маршрутизацию на догадке. III требует отдельного существующего UDP/QUIC-клиента; установки и рестарты по-прежнему запрещены.
 
 ## Безопасность, валидация и STOP
 
