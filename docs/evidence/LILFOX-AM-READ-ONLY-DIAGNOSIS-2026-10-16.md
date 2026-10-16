@@ -1,14 +1,86 @@
 # LilFox Amsterdam — диагностика, восстановление G1/G2 и verification
 
-`FACT` — **AMSTERDAM RECOVERY**, 16 октября, 13:17–13:31 UTC: после отдельного прямого разрешения владельца **G1 PASS в принятой UI-границе; G2 PASS**. Owned A теперь на CURRENT_ADDRESS, три allowlisted metadata исправлены; protected set прежний. Локальные 12/12 и внешние 12/12 файлов с принудительным CURRENT_ADDRESS прошли TLS/full-body checks. **Обычный Windows DNS path: ENOTFOUND. Windows basic I/II: 12/12 PASS; Android/Happ: 0/18, III: NOT TESTED.** `VPN_RESTORED=NOT_PROVEN`, end-to-end доставка в Happ не принята. Подробный актуальный receipt ниже; последующие секции G0/UI-G1 сохранены как история подготовки, а не текущий запрет утверждённого run.
+`FACT` — **AMSTERDAM FINAL ACCEPTANCE**, 16 октября, 18:13–18:25 UTC (21:13–21:25 МСК), продолжение от `483bb0b5`: DNS/HTML/configs/службы/backup сохранили эталонное состояние; local origin и внешняя доставка через per-request DoH — 12/12 PASS. **Владелец сообщил реальные Android/Happ I и II basic PASS на 4G+; Windows III впервые проверен: 6/6 basic PASS с certificate pin.** Свежая Windows I/II матрица: 11/12 strict PASS с первого запуска, S6/II — timeout одного endpoint, затем 2/2 PASS в единственной повторной пробе. Системный DNS ноутбука не работает также для контрольного домена. `FULL_HAPP_ACCEPTANCE=NOT_COMPLETE`, `FINAL_ACCEPTANCE=PARTIAL`; G1/G2 не повторялись, production writes не выполнялись. Исторические NOT TESTED/NOT_RUN ниже относятся к прежним этапам.
 
 - `FACT` — Evidence ID: `LILFOX-AM-READ-ONLY-2026-10-16`; отчёт обновлён после подключения Desktop Commander.
 - `FACT` — основные сетевые и серверные наблюдения: 15 октября 2026, 21:45–22:14 UTC (16 октября, 00:45–01:14 МСК).
 - `FACT` — исходный main: `8b29c9cff517c0b114a4aee8f6f4745fa94411c3`.
-- `DECISION` — текущий owner gate явно разрешил одну DNS A-правку через UI, ровно три metadata replacements после проверки backup/guards/origin и безопасную verification без изменения route configs. Другие DNS/VPS/HTML/subscriptions/keys/certificates/trust/restarts, merge и deployment не разрешены.
-- `FACT` — `VPN_RESTORED=NOT_PROVEN`. Свежие Windows HTTPS tests всех шести I/II прошли; нет настоящей Happ/Android-приёмки, III client test или formal acceptance.
+- `DECISION` — текущая миссия разрешает только диагностику, безопасные network/client tests и документацию рабочей ветки. Прежний G1/G2 write gate исполнен и не используется повторно. Новых DNS/VPS/profile/config/key/certificate/route/trust изменений, service restart/reboot, merge или deployment не разрешено.
+- `FACT` — Android basic I/II подтверждены сообщением владельца; Android III и матрица шести телефонов не подтверждены. Native Windows basic tests не подменяют Happ-приёмку или formal acceptance.
 
-## Recovery receipt — 16 октября, 13:17–13:31 UTC
+## Final acceptance — 16 октября, 18:13–18:25 UTC
+
+### Новые Android-доказательства и их происхождение
+
+`FACT` — в поручении FINAL ACCEPTANCE владелец сообщил результаты реального Happ на Android/4G+, выполненные 16 октября. Источник этого добавления — непосредственное сообщение владельца; screenshots переданы центральному архитектору и **не были независимо просмотрены исполнителем этой редакции**. Точное время испытаний, конкретный subscription slot, версия Happ и independent second exit endpoint не предоставлены. Это признанная базовая Android-приёмка I/II, не 18/18 и не formal protocol PASS.
+
+| Android владельца, 4G+ | Наблюдение по сообщению владельца | Статус |
+|---|---|---|
+| Amsterdam I | VLESS/TCP/REALITY, браузер открыл 2ip.io; exit IP совпал с CURRENT_ADDRESS, location/provider ожидаемые | `OWNER_REPORTED_BASIC_PASS` |
+| Amsterdam II | VLESS/XHTTP/REALITY, браузер подтвердил тот же expected exit/location/provider | `OWNER_REPORTED_BASIC_PASS` |
+| Amsterdam III | Android/Happ проверки ещё нет | `NOT TESTED` |
+
+`DECISION` — эти два результата не привязаны по догадке к S1–S6: владелец может использовать отдельную identity. В шести recipient Android-строках ниже остаётся NOT TESTED до точного сопоставления и реального испытания. Owner-reported evidence отделено от свежих tool observations.
+
+### Текущее состояние и доставка
+
+| Компонент | Свежий результат | Ограничение |
+|---|---|---|
+| Публичный DNS | Google + Cloudflare DoH: A=CURRENT_ADDRESS, TTL300, rcode0, AAAA пусты | UI/backend fields заново не экспортировались; не заявляется новый полный API audit |
+| Page/metadata | 6/6 owned origins, links на существующие subscriptions; post-G2 page digest прежний | Saved Happ source URL на чужом телефоне этим не обновляется |
+| Профили | Все 6 × 3 destinations текущие; protected hash шести subs и четырёх configs прежний | Проверка содержимого дополнена actual native client runs, не объявляется изменением profiles |
+| Local origin HTTPS | 12/12 HTTP200; нормальная chain/hostname verification, streaming SHA/size/Content-Length/no-store совпали | Это localhost origin evidence |
+| External HTTPS с ноутбука | Bootstrap DoH по HTTPS с проверкой сертификата вернул current A; 12/12 точных файлов через полученный адрес прошли TLS/full SHA/size/headers | Lookup переопределён только внутри тестового процесса; системный DNS не исправлялся |
+| III certificate | Self-signed, действителен сейчас, SHA-256 совпадает с pin всех шести subscriptions; SAN отсутствует | Контракт использует exact certificate pin; это не PKI hostname validation |
+| VPS services/state | До и после probes четыре unit states/PID/NRestarts совпали с recovery receipt | Service state не используется как data-path verdict |
+| Private backup | Прежний archive/manifest SHA, regular members 3/3, content hashes и root0700/files0600 PASS до и после | Это прежний off-VPS operator backup, не новый disaster/reboot test |
+
+`FACT` — свежие readback guards: pages `b688a7a931420845161ca202b25b3e98b370d6f368265a87e94a13350f95fdee`; protected `7f517d021fc6189b1b4b47e52c38a18c8c256c599a2a9c89cf841808231f08c1`. Backup archive `320f2db063ed828fddd5b1ba9b20a8d3d76b2d83205c3ce088629614ecafbd55` и private manifest `54c28a3ec33149d49fe8325294d7b03d42f953adb7db1de4d6d06d4b3e25d101` прежние. Strict pinned SSH, explicit target-specific known_hosts/identity и запрет UpdateHostKeys сохранены. G1/G2 не запускались; серверных writes нет.
+
+### Windows DNS: подтверждённая локализация и предел диагноза
+
+`FACT` — Node `dns.lookup`/getaddrinfo вернул ENOTFOUND **для target и независимого контрольного домена**. Node `dns.resolve4`/classic DNS вернул ETIMEOUT для обоих; Windows Resolve-DnsName с QuickTimeout также завершился Win32 timeout 1460 для обоих. Это расширяет диагноз от одного owned hostname до системного/classic DNS-пути данного ноутбука.
+
+`FACT` — с того же ноутбука bootstrap HTTPS DoH к публичному resolver прошёл с нормальной TLS verification и получил ожидаемую запись; последующий owned HTTPS отдал все 12 проверенных файлов. Три активных DNS interfaces включают tunnel-named interface; configured DNS не исключительно loopback, local UDP53 listener имеется. Его роль/полная цепочка обработки не установлены. Системные DNS servers, cache, routes, hosts, TUN/proxy и firewall не менялись.
+
+`DECISION` — `SYSTEM_DNS_WINDOWS=FAIL`, `HTTPS_DELIVERY_WITH_PROCESS_DOH=PASS`. Доказанный минимальный отказ — используемый ноутбуком classic/system DNS path, а не stale public A, Caddy body или HTTPS certificate. Какой именно upstream/локальный обработчик/маршрутизирующее правило виноват, **не установлено**. Нельзя объявлять причиной конкретную настройку Happ, отсутствие DNS listener или российскую фильтрацию. Прикладной DoH test не является исправлением OS DNS или проверкой обычного Happ refresh. Дальнейший ремонт рабочей сети потребует отдельного решения после установления точного компонента; в текущих полномочиях направление остановлено без изменения сети.
+
+### Реальная проверка III и исправление прежнего вывода о клиенте
+
+`FACT` — прежний вывод «отдельного hysteria/sing-box executable не найдено, значит доступного III-клиента нет» был неполным. [Xray поддерживает Hysteria outbound](https://xtls.github.io/en/config/outbounds/hysteria.html) и [QUIC/Hysteria transport](https://xtls.github.io/en/config/transports/hysteria.html). Существующий native Xray 26.7.28 успешно выполнил config test и реальные III data-path tests; установки, обновления core или новые сервисы не потребовались. Исторические III NOT TESTED ниже не описывают нынешний Windows result.
+
+`FACT` — III candidates взяты из фактических шести subscriptions, полученных через verified HTTPS и сопоставленных с server SHA. Созданы только отдельные RAM/stdin configs с loopback SOCKS, одним Hysteria2 outbound/QUIC transport и без direct fallback. Использованы оригинальные auth и SHA-256 certificate pin, предварительно сопоставленный с действительным server certificate через pinned SSH. `allowInsecure=false`; TLS не отключался, CA stores/рабочие profiles не менялись. [Документация TLS](https://xtls.github.io/en/config/transports/tls.html) описывает exact-leaf pin как отдельную проверку подлинности; для такого self-signed/no-SAN контракта не заявляется обычная CA/name validation.
+
+`FACT` — у S1 корректный pin дважды дал 2/2 HTTPS200/expected exit matches. В двух парных negative controls изменялся TLS pin на заведомо неверный: curl35, HTTP0, body0; original process сохранён. Это наблюдаемое ожидаемое различие positive/negative outcomes. Warning log не выдал certificate-specific reason; первоначальный log-regex assertion harness остался **INCONCLUSIVE**, а не был переименован в доказанный текст TLS ошибки. После двух контролей поиск error message прекращён; дальнейших повторов controls не было. Остальные S2–S6 проверены один раз с настоящими pins: 5/5 × 2 HTTPS exit PASS. Итог — шесть уникальных Windows III basic PASS; precise negative-error attribution и formal cryptographic implementation audit не заявляются.
+
+`FACT` — прежний certificate inspector предполагал SAN и новую cryptography UTC API; read-only discriminator показал отсутствие SAN и старую API. Проверка совместимости исправлена без изменения сертификата или параметров TLS. Ошибка подготовки scratch filename также устранена до запуска реального network test. Эти ошибки harness не трактуются как отказы VPS.
+
+### Доступная клиентская матрица и повторяемость
+
+`FACT` — I/II повторно проверены для всех шести подписок в 18:22–18:24 UTC. Первый batch: 11/12 strict two-endpoint PASS. S6/II: первый HTTPS endpoint timeout (curl28/HTTP0), второй HTTPS200/expected exit PASS; batch остановлен. Одна различающая повторная проба **только S6/II** в 18:24:30 UTC дала 2/2 HTTPS200/exit matches. Исходный timeout сохранён как transient observation, точная причина не установлена; полной repeatability нет.
+
+| Subscription slot | Windows I | Windows II | Windows III | Recipient Happ Android I / II / III |
+|---|---|---|---|---|
+| S1 | BASIC PASS | BASIC PASS | BASIC PASS, pin | NOT TESTED / NOT TESTED / NOT TESTED |
+| S2 | BASIC PASS | BASIC PASS | BASIC PASS, pin | NOT TESTED / NOT TESTED / NOT TESTED |
+| S3 | BASIC PASS | BASIC PASS | BASIC PASS, pin | NOT TESTED / NOT TESTED / NOT TESTED |
+| S4 | BASIC PASS | BASIC PASS | BASIC PASS, pin | NOT TESTED / NOT TESTED / NOT TESTED |
+| S5 | BASIC PASS | BASIC PASS | BASIC PASS, pin | NOT TESTED / NOT TESTED / NOT TESTED |
+| S6 | BASIC PASS | PASS on recheck; initial 1/2 timeout | BASIC PASS, pin | NOT TESTED / NOT TESTED / NOT TESTED |
+
+`FACT` — каждая BASIC PASS cell означает два HTTPS200/expected exit matches, config-test/SOCKS-ready и завершение собственного process с сохранением исходного working Xray. First-run unique matrix: 17/18 strict cells; S6/II прошёл one recheck. Это native Windows диагностическая матрица в существующем management TUN/VPN контуре, не 18/18 Happ/Android и не прямой RF UDP path. HTTP, три reconnect rounds, UDP application datagram relay, restart/isolation и multi-network formal acceptance не проверялись. ADB executable есть, но existing running daemon/session к телефону нет; pairing/daemon не запускались. Доступа к шести телефонам получателей нет.
+
+### Готовность и решение о закрытии
+
+`DECISION` — `RECOVERY_G1_G2=TECHNICALLY_COMPLETE`: DNS/лендинги исправлены и сохранились, origin и внешняя доставка через независимый resolver проверены. **Этап DNS/HTML recovery можно закрыть технически; повторные production writes для него не нужны.** Это не закрытие/merge PR и не формальное принятие всей VPN-системы.
+
+`DECISION` — I/II пригодны для использования в конкретном подтверждённом владельцем Android/4G+ сценарии; native Windows показал basic работоспособность трёх маршрутов для всех шести identities, с отмеченным transient S6/II. **FINAL ACCEPTANCE полностью закрывать рано:** обычный DNS-путь Windows FAIL; Android III и достоверно сопоставленная recipient matrix 18/18 не проверены; есть transient timeout и нет formal repeatability/isolation evidence. `FINAL_ACCEPTANCE=PARTIAL`, `FULL_HAPP_ACCEPTANCE=NOT_COMPLETE`.
+
+`TODO` — единственное необходимое действие владельца для ближайшего Android III check: **в том же Happ на той же 4G+ выбрать существующий Amsterdam III, подключиться и открыть 2ip.io; сообщить, совпал ли exit с ожидаемым адресом. При ошибке TLS остановиться, не отключать проверку и не менять profile/pin.** Это локальная клиентская приёмка, недоступная имеющимся инструментам; серверные команды/логи владельцу переносить не предлагается. После неё останется отдельная приёмка получателей и, если нужен Windows normal delivery, разрешённая диагностика/починка точного DNS-компонента.
+
+`DECISION` — дальнейшие проверки/изменения, требующие нового доступа или изменения рабочей сети, STOP. В этой миссии production DNS/VPS/HTML/subscriptions/keys/certificates/routes/SSH trust не менялись; restart/reboot, платные сервисы, установка ПО, merge/deployment отсутствуют. Single VPS failure domain и будущая необходимость согласованного обновления certificate pin при ротации остаются архитектурными ограничениями.
+
+## Recovery receipt — историческое исполнение 16 октября, 13:17–13:31 UTC
 
 `DECISION` — исполнение продолжено от `41ba2703`; владелец отдельно утвердил G1+G2+Verification, принял UI-ограничения без полного API snapshot и forward-only recovery. Это разрешение относится к данному run/target и перечисленным изменениям; не является правом повторных future writes. Ни один прежний API-blocker не обходился.
 
@@ -416,5 +488,5 @@ content = CURRENT_ADDRESS   # only intended semantic delta
 - `FACT` — recovery run изменил ровно одну A-запись через UI и три allowlisted HTML metadata. Private stage/receipts и operator evidence созданы в разрешённых пространствах. Конфигурации VPS, subscriptions, keys/certificates, firewall/ports и SSH trust не записывались; units не рестартовали, PID/NRestarts прежние. Native client configs только в RAM, собственные test processes завершены, исходный Xray сохранён. Новое ПО не устанавливалось.
 - `FACT` — Primary DeepWork и PP-LAB-01 не использовались как targets/control hosts; payment/deployment/merge отсутствуют.
 - `TODO` — результаты staged/full-diff Gitleaks, manual sanitization, GitHub readback и CI для этой редакции фиксируются в существующем Draft PR. Нельзя считать прежний CI проверкой нового commit.
-- `TODO` — не проверены Android/прямые RF-сети, сохранённые Happ source URLs шести телефонов, III UDP data path и formal acceptance. Обычный Windows/Node resolver path вернул ENOTFOUND; причина не установлена. Полного API snapshot по-прежнему нет, ограничения UI приняты владельцем для выполненного run. External forced-current file checks не заменяют обычный DNS/Happ refresh.
-- `DECISION` — разрешённый G1/G2 run завершён; дальнейшие production writes STOP до отдельного решения. Ближайший полезный шаг — независимая проверка receipt центральным архитектором и реальная Happ-приёмка по матрице с разбором Windows ENOTFOUND. Повторная DNS/HTML запись и возврат старого origin не требуются.
+- `TODO` — после FINAL ACCEPTANCE не проверены Android III, сопоставленные Happ source URLs и 18-cell приёмка шести телефонов, прямой RF III path, UDP application datagram relay и formal repeatability/isolation. Android I/II owner-reported basic PASS признаны, native Windows III basic data path проверен. System/classic DNS Windows FAIL также для контрольного домена, process-local DoH/12-file delivery PASS; точный неисправный DNS компонент не установлен. Полного API snapshot нет, прежние UI-ограничения приняты для выполненного recovery run.
+- `DECISION` — технический G1/G2 recovery завершён; дальнейшие production writes STOP до отдельного решения. Full final acceptance остаётся PARTIAL. Ближайший полезный шаг — один Android III owner check и независимый review архитектора, затем при необходимости recipient matrix/отдельный Windows DNS repair gate. Повторная DNS/HTML запись и возврат старого origin не требуются.
