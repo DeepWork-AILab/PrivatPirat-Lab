@@ -1,14 +1,85 @@
-# LilFox Amsterdam — read-only diagnosis и пакет восстановления
+# LilFox Amsterdam — диагностика, восстановление G1/G2 и verification
 
-`FACT` — последнее продолжение **AMSTERDAM-G0 / Cloudflare UI Recovery**, 16 октября, 13:04–13:06 UTC: штатный UI однозначно выбирает одну целевую A-запись и открывает отдельную редактируемую форму. Все отображаемые поля сверены до и после read-only reload. **UI-G1 подготовлен для отдельного утверждения без API record_id**; сохранение/изменение полей не выполнялось. `UI_G1_PROCEDURE=READY_FOR_REVIEW`, `UI_G1_WRITE=NOT_RUN`, `G0_PASS=NOT_DECLARED`, `EXECUTION_AUTHORIZED=false`. Последняя процедура — в секции «UI-G1»; прежний API blocker остаётся ограничением API-варианта. Backup и ночная диагностика не повторялись.
+`FACT` — **AMSTERDAM RECOVERY**, 16 октября, 13:17–13:31 UTC: после отдельного прямого разрешения владельца **G1 PASS в принятой UI-границе; G2 PASS**. Owned A теперь на CURRENT_ADDRESS, три allowlisted metadata исправлены; protected set прежний. Локальные 12/12 и внешние 12/12 файлов с принудительным CURRENT_ADDRESS прошли TLS/full-body checks. **Обычный Windows DNS path: ENOTFOUND. Windows basic I/II: 12/12 PASS; Android/Happ: 0/18, III: NOT TESTED.** `VPN_RESTORED=NOT_PROVEN`, end-to-end доставка в Happ не принята. Подробный актуальный receipt ниже; последующие секции G0/UI-G1 сохранены как история подготовки, а не текущий запрет утверждённого run.
 
 - `FACT` — Evidence ID: `LILFOX-AM-READ-ONLY-2026-10-16`; отчёт обновлён после подключения Desktop Commander.
 - `FACT` — основные сетевые и серверные наблюдения: 15 октября 2026, 21:45–22:14 UTC (16 октября, 00:45–01:14 МСК).
 - `FACT` — исходный main: `8b29c9cff517c0b114a4aee8f6f4745fa94411c3`.
-- `DECISION` — разрешены диагностика, этот документ в рабочей ветке/Draft PR и, по новому поручению, долговечный backup только в существующем приватном операторском WSL-пространстве. Изменения VPS/DNS/действующих подписок, SSH trust, deployment и merge не разрешены.
-- `FACT` — `VPN_RESTORED=NOT_PROVEN`. Есть свежий успешный Windows HTTPS data path I и II, но нет новой Android-матрицы, III client test или formal acceptance.
+- `DECISION` — текущий owner gate явно разрешил одну DNS A-правку через UI, ровно три metadata replacements после проверки backup/guards/origin и безопасную verification без изменения route configs. Другие DNS/VPS/HTML/subscriptions/keys/certificates/trust/restarts, merge и deployment не разрешены.
+- `FACT` — `VPN_RESTORED=NOT_PROVEN`. Свежие Windows HTTPS tests всех шести I/II прошли; нет настоящей Happ/Android-приёмки, III client test или formal acceptance.
 
-## Текущий диагноз
+## Recovery receipt — 16 октября, 13:17–13:31 UTC
+
+`DECISION` — исполнение продолжено от `41ba2703`; владелец отдельно утвердил G1+G2+Verification, принял UI-ограничения без полного API snapshot и forward-only recovery. Это разрешение относится к данному run/target и перечисленным изменениям; не является правом повторных future writes. Ни один прежний API-blocker не обходился.
+
+| Этап | Actual / verdict |
+|---|---|
+| UI before | Exact account/zone/host, одна A, OLD_ADDRESS, DNS only, TTL Auto/control 1, comment пуст; private before snapshot fsync/readback PASS |
+| G1 | Изменён только IPv4 textbox. Перед Save все остальные видимые поля совпали; ровно один scoped Save. Завершение и persisted readback после reload подтвердили CURRENT_ADDRESS, прежние type/name/proxy/Auto/comment; screenshot получен. `G1=PASS` в принятой UI-границе |
+| Public DNS | В 13:19 UTC Google + Cloudflare DoH: A=CURRENT_ADDRESS, TTL300, rcode0; AAAA пусты у обоих. Финальная A-проверка 13:30–13:31 UTC также CURRENT_ADDRESS |
+| Backup перед G2 | Прежний archive и private manifest совпали с зафиксированными SHA-256; permissions и 3/3 members/hash/mode/uid/gid проверены. Новый HTML backup не создавался |
+| Pre-G2 guards/origin | Прежние page и protected digests совпали; own origin 12/12 HTTP200, verified TLS, streaming full hash/size/headers match |
+| G2 | Последовательные atomic file replace slots 2/5/6 в 13:23:37 UTC. После каждого source/protected guards и опубликованный hash PASS; все остальные bytes и URI components сохранены. `G2=PASS` |
+| Final server state | Отдельная strict-pinned SSH-сессия подтвердила итоговый page digest и прежний protected digest, 6/6 owned metadata и 18/18 CURRENT_ADDRESS destinations; все четыре PID/NRestarts прежние |
+| External origin | Новый IP с собственным Host/SNI: expected root404, нормальная TLS verification. Затем все 6 Landing + 6 subscriptions: HTTPS200, полные body SHA/size/Content-Length и no-store PASS, IP закреплён только внутри теста |
+| External normal DNS | Нативный Node/Windows root request по обычному имени: `ENOTFOUND` до TLS/HTTP; ни один персональный URL этим неуспешным запросом не отправлен. `NORMAL_WINDOWS_DELIVERY=FAIL` для этого observer |
+| Native Windows I/II | В 13:28–13:30 UTC все 6 subscription slots × I/II: 12/12 basic HTTPS exit PASS; два независимых HTTPS200/expected exit match на candidate |
+| Happ / III | Android/Happ 0/18; III UDP/QUIC NOT TESTED. Службы/порты/старые PASS не подменяют эту приёмку |
+
+### Точная публикация и сохранность
+
+`FACT` — backup readback использовал прежний private archive SHA `320f2db063ed828fddd5b1ba9b20a8d3d76b2d83205c3ce088629614ecafbd55` и manifest SHA `54c28a3ec33149d49fe8325294d7b03d42f953adb7db1de4d6d06d4b3e25d101`. Во всех фактических командах применялся точный зафиксированный page guard из таблицы; drift не принимался.
+
+| Guard | SHA-256 |
+|---|---|
+| Frozen pages до G2 | `61a36ceb21976cb1201b14681e9f7c79182302e8067bca2124802085d10bc251` |
+| Ожидаемые pages после G2, подтверждены отдельным readback | `b688a7a931420845161ca202b25b3e98b370d6f368265a87e94a13350f95fdee` |
+| Protected: шесть subscriptions + Caddy + I/II/III configs, до/после | `7f517d021fc6189b1b4b47e52c38a18c8c256c599a2a9c89cf841808231f08c1` |
+| Исполненный private G2 script | `10f3a81211959605c58e62eda04e62f2eaf534c4a0f9af486582c91c08b183ee` |
+| Private client/external verification receipt | `5632c355ebc2e601eab37d4c043aa7ca13e964739bd7629381973adeb3af9cb8` |
+
+| Изменённый page slot | SHA-256 опубликованных bytes | Bytes |
+|---|---|---|
+| 2 | `77950043c6606bb2a0c249aa95c7fecb6fe88326b4978562e83f55f378e8c9c5` | 2 730 776 |
+| 5 | `25b1cbf4d8f455760764fbd326e7badfbb2c2b279653e03936a32fdada1693ce` | 2 695 506 |
+| 6 | `1664659ec22334b62dc3c87f119c69e4cd618841665a2db0345acdb8f0a7818d` | 2 695 956 |
+
+`FACT` — каждый HTML увеличился ровно на 5 bytes из-за authority substitution. Сохранены scheme/port/path/token/query/fragment, bytes вне единственного metadata tag, owner/group и mode 0644; обратная substitution в RAM возвращала исходник. Неучтённых extended attributes у трёх sources нет. Slots 1/3/4 остались byte/hash/mode/owner-identical; page filenames/count прежние. Это page slots, не номера получателей или subscription slots.
+
+`FACT` — stage создан эксклюзивно 0700 вне public root на той же FS. Candidate files эксклюзивны; directory handles/O_NOFOLLOW, source type/nlink/inode/hash checks, fsync candidate и directories, затем `os.replace` только точного файла. До следующего replace проверялись оставшиеся frozen sources, уже опубликованные candidate hashes и protected set. Private intent/per-file/complete receipts оставлены в stage; копия исполненного script и результата — в существующем operator backup space. Source directories не заменялись, чужие файлы не удалялись. Три file replacements не являются общей атомарной транзакцией и не дают CAS против другого root writer.
+
+`FACT` — безопасное восстановление не понадобилось. Backup/архив не переписывались; новые ссылки/credentials/subscriptions не генерировались. Старый адрес/legacy origin не возвращались. Службы не рестартовали и не reload-ились; route/Caddy configs, keys/certificates/firewall/ports/trust не менялись.
+
+`FACT` — две ошибки инструментария остановили действие до production mutation: сравнение JSON по порядку свойств дало ложный preflight STOP; чтение подтвердило прежние значения, сравнение заменено на field-by-field до Save. Первая длинная команда G2 была отвергнута Windows как ENAMETOOLONG до запуска процесса; удаление повторно встроенного исходника сократило transport command, после чего G2 запущен один раз. Неизвестных результатов записи и blind retries не было. Локальный тест primitive с имитацией ENOSPC до replace сохранил исходный файл; это harness check в облачном temp, не disk-full fault injection на VPS.
+
+### Проверка внешней доставки: граница доказательства
+
+`FACT` — обычный Windows/Node request не разрешил owned hostname (`ENOTFOUND`). Один различающий bundle с explicit CURRENT_ADDRESS и прежними Host/SNI прошёл для всех 12 точных путей; TLS verification не отключалась. Персональные пути/HTML/subscription bytes обрабатывались только в RAM VPS/операторского компьютера, не выводились в чат/Git. Normal request не пытался автоматически fallback/retry; отдельный force-current test не менял DNS, hosts, TUN/proxy или системную маршрутизацию.
+
+`DECISION` — `EXTERNAL_FORCED_ORIGIN_FILES=12/12 PASS` не переименовывать в normal delivery/Happ refresh PASS. Нормальная доставка этого ноутбука ограничена локальным resolver path, несмотря на правильные публичные ответы. Конкретная причина ENOTFOUND внутри Windows/TUN/proxy контура не установлена. Исторический timeout до delivery listener сегодня при explicit current не воспроизвёлся; причинную связь только с DNS-правкой нельзя считать доказанной.
+
+### Реальная матрица и оставшаяся Happ-приёмка 6 × 3
+
+`FACT` — six subscription slots определены лексикографическим порядком текущих server sub files, отдельно от page slots. Каждая реальная подписка заново получена по verified external HTTPS с закреплённым current IP и сопоставлена SHA-256 с серверным source. I/II candidates разобраны из полученных bytes; конфигурации переданы существующему native Xray через stdin, в память, без сохранения на диск. Отдельный loopback SOCKS, sniffing disabled только тестового inbound, outbound без direct fallback; curl с explicit SOCKS5h и обычной TLS verification выполнил два HTTPS exit checks. Каждая строка W-PASS ниже означает один запуск candidate и 2/2 HTTPS200/expected exit matches.
+
+| Subscription slot | Windows I | Windows II | Windows III | Happ/Android I | Happ/Android II | Happ/Android III |
+|---|---|---|---|---|---|---|
+| S1 | W-PASS | W-PASS | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
+| S2 | W-PASS | W-PASS | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
+| S3 | W-PASS | W-PASS | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
+| S4 | W-PASS | W-PASS | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
+| S5 | W-PASS | W-PASS | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
+| S6 | W-PASS | W-PASS | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
+
+`FACT` — `WINDOWS_BASIC_HTTPS=12/12`, 24/24 HTTPS exit checks; все configuration tests и SOCKS readiness PASS, `received real certificate` не наблюдалось. Каждый собственный test process завершён; исходный working Xray сохранён. Windows TUN/proxy/default routes и пользовательские profiles не менялись. Это та же среда ноутбука с работающим management VPN, не доказательство прямого RF path. Нет HTTP, трёх reconnect rounds, restart/isolation и formal acceptance; они не объявляются пройденными.
+
+`FACT` — в проверенном Happ core имеется только Xray. Existing PATH Windows и WSL не содержит hysteria/hysteria2/sing-box; новое ПО не устанавливалось. III остаётся `NOT TESTED`, а не FAIL/PASS по service state. ADB executable обнаружен, но существующего running daemon/session нет; daemon, trust pairing и телефон не запускались/не изменялись. Поэтому настоящий Android/Happ refresh и все 18 сочетаний — `NOT TESTED`, без фиктивного 18/18 PASS.
+
+`TODO` — реальная приёмка: для S1–S6 установить точный сохранённый Happ source origin в приватном контуре; legacy URL сам от HTML не обновится. При существующем разрешённом доступе проверить refresh без раскрытия URL, затем каждый I/II/III на целевой Wi-Fi/mobile сети: DNS, HTTP/HTTPS, два expected exit checks, clean reconnect и требуемые protocol checks. Времена/network/app version и результаты фиксировать по каждому из 18 сочетаний. Restart/isolation запрещены нынешним gate и потребуют отдельного решения. До принятия этой матрицы `VPN_RESTORED=NOT_PROVEN`.
+
+`DECISION` — run завершает разрешённые G1/G2 writes. Правильный current A сохраняется. Дальнейшие изменения DNS/Windows resolver/Happ settings/VPS/протоколов не выполняются. Ближайший полезный шаг — независимый review receipt и доступная реальная Happ-приёмка с отдельным разбором normal Windows ENOTFOUND; повторный G2 или возврат legacy origin не нужны.
+
+## Диагноз до восстановления — исторические наблюдения ночного этапа
 
 | Слой | Статус | Подтверждённое наблюдение |
 |---|---|---|
@@ -217,7 +288,7 @@ content = CURRENT_ADDRESS   # only intended semantic delta
 
 `TODO` — после G1/G2 провести независимый реальный Happ refresh и целевую клиентскую матрицу. При остающемся network failure — один различающий read-only test с source/time/control, затем STOP направления; не менять протоколы, ports, firewall, certificate pins или рабочую маршрутизацию на догадке. III требует отдельного существующего UDP/QUIC-клиента; установки и рестарты по-прежнему запрещены.
 
-## Завершение G0 — 16 октября, 12:40–12:51 UTC
+## Исторический checkpoint G0 — 16 октября, 12:40–12:51 UTC
 
 `DECISION` — продолжение от `4b16778a`, без повторного запуска ночной диагностики. Новый scope явно разрешает приватный backup и безопасные тесты. Production writes по-прежнему запрещены. Этот checkpoint уточняет предыдущий, но не превращает частичную подготовку в G0 PASS.
 
@@ -283,6 +354,8 @@ content = CURRENT_ADDRESS   # only intended semantic delta
 
 ## UI-G1 — альтернативная процедура для утверждения, 16 октября, 13:04–13:06 UTC
 
+`FACT` — эта секция сохраняет proposal и границы полномочий на момент подготовки. Позднейшее отдельное owner approval и фактическое исполнение 13:17–13:31 UTC отражены в Recovery receipt в начале документа; прежние NOT_RUN/NOT_AUTHORIZED ниже не описывают состояние завершённого run.
+
 `DECISION` — новое прямое поручение разрешает подготовить штатный UI-вариант без обязательного API record_id. Для этого варианта прежнее требование полного API snapshot заменяется проверяемым snapshot всех отображаемых полей, однозначным выбором записи и явным принятием ограничений UI. Это проект альтернативы, не разрешение исполнения и не обход блокировки API. API-вариант выше остаётся заблокированным; его prerequisites не переносятся автоматически на UI-G1.
 
 ### Проверка осуществимости без записи
@@ -340,8 +413,8 @@ content = CURRENT_ADDRESS   # only intended semantic delta
 ## Безопасность, валидация и STOP
 
 - `FACT` — перед публикацией отчёта ранее прошли существующие 26 generator tests. Это не live VPN acceptance.
-- `FACT` — диагностические commands не записывали VPS configs/subscriptions/HTML/DNS/trust и не перезапускали units; после проб все четыре units сохранили PID/NRestarts. Разрешённые постоянные writes текущего этапа — только private operator backup и документация рабочей ветки. Ночные Windows client configs были только в памяти, собственные процессы завершены, рабочие Xray PID сохранены. Новое ПО не устанавливалось.
+- `FACT` — recovery run изменил ровно одну A-запись через UI и три allowlisted HTML metadata. Private stage/receipts и operator evidence созданы в разрешённых пространствах. Конфигурации VPS, subscriptions, keys/certificates, firewall/ports и SSH trust не записывались; units не рестартовали, PID/NRestarts прежние. Native client configs только в RAM, собственные test processes завершены, исходный Xray сохранён. Новое ПО не устанавливалось.
 - `FACT` — Primary DeepWork и PP-LAB-01 не использовались как targets/control hosts; payment/deployment/merge отсутствуют.
 - `TODO` — результаты staged/full-diff Gitleaks, manual sanitization, GitHub readback и CI для этой редакции фиксируются в существующем Draft PR. Нельзя считать прежний CI проверкой нового commit.
-- `TODO` — не проверены Android/прямые RF-сети, реальные source URLs шести телефонов, III UDP data path и formal acceptance. Причина loss до delivery listener и недоступность полного API snapshot остаются ограничениями; UI-G1 явно ограничен отображаемыми полями и публичным DNS.
-- `DECISION` — любые production изменения STOP до отдельного разрешения. Ближайший полезный шаг — review и отдельное утверждение UI-G1 владельцем с принятием его residual risks и forward-only recovery; если нужен полный backend-fields proof, сначала решить API blocker. Ни один вариант не означает разрешение G2 или доказательство внешней доставки.
+- `TODO` — не проверены Android/прямые RF-сети, сохранённые Happ source URLs шести телефонов, III UDP data path и formal acceptance. Обычный Windows/Node resolver path вернул ENOTFOUND; причина не установлена. Полного API snapshot по-прежнему нет, ограничения UI приняты владельцем для выполненного run. External forced-current file checks не заменяют обычный DNS/Happ refresh.
+- `DECISION` — разрешённый G1/G2 run завершён; дальнейшие production writes STOP до отдельного решения. Ближайший полезный шаг — независимая проверка receipt центральным архитектором и реальная Happ-приёмка по матрице с разбором Windows ENOTFOUND. Повторная DNS/HTML запись и возврат старого origin не требуются.
